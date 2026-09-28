@@ -13,17 +13,19 @@ if not exist "%BASE%aria2-next.exe" (
   echo Falta aria2-next.exe na mesma pasta deste arquivo.
   echo Baixe o binario Windows x64 em https://github.com/AnInsomniacy/aria2-next/releases
   echo e coloque como "%BASE%aria2-next.exe".
+  pause
   exit /b 1
 )
 
 set "STAMP=%RANDOM%-%RANDOM%"
 set "LOG=%BASE%aria2-ultra-torrent-diagnostico-next-%STAMP%.log"
 set "DEST=%BASE%teste-torrent-diagnostico-next-%STAMP%"
-mkdir "%DEST%" || exit /b 1
+mkdir "%DEST%" || (pause & exit /b 1)
 
 set /p "TORRENT=Cole um magnet (v1 ou v2) ou caminho de arquivo .torrent e pressione Enter: "
 if not defined TORRENT (
   echo Nenhum torrent informado.
+  pause
   exit /b 1
 )
 

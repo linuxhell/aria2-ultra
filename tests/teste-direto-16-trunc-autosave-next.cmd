@@ -4,20 +4,25 @@ rem trunc, auto-save=60s), portada para o motor aria2-next (libcurl + estado
 rem proprio em --state-dir). NAO mexe em teste-direto-16-trunc-autosave.cmd
 rem nem em aria2c.exe: aquele teste continua validando o binario antigo.
 setlocal DisableDelayedExpansion
-set "BASE=%~dp0..\"
+rem Funciona tanto solto na mesma pasta do aria2-next.exe quanto dentro
+rem de uma subpasta tests\ (layout original do repositorio).
+set "BASE=%~dp0"
+if not exist "%BASE%aria2-next.exe" set "BASE=%~dp0..\"
 if not exist "%BASE%aria2-next.exe" (
-  echo Falta aria2-next.exe na raiz do pacote.
+  echo Falta aria2-next.exe nesta pasta ou na pasta acima.
   echo Baixe o binario Windows x64 em https://github.com/AnInsomniacy/aria2-next/releases
-  echo e coloque como "%BASE%aria2-next.exe".
+  echo e coloque como "%~dp0aria2-next.exe".
+  pause
   exit /b 1
 )
 set "LOG=%BASE%aria2-ultra-direto-16-trunc-autosave-next-%RANDOM%-%RANDOM%.log"
 set "DEST=%BASE%teste-direto-16-trunc-autosave-next-%RANDOM%-%RANDOM%"
-mkdir "%DEST%" || exit /b 1
+mkdir "%DEST%" || (pause & exit /b 1)
 set "ISO_URL=%~1"
 if not defined ISO_URL set /p "ISO_URL=Cole o link completo e valido da ISO Microsoft e pressione Enter: "
 if not defined ISO_URL (
   echo Nenhum link informado.
+  pause
   exit /b 1
 )
 echo TESTE DE RETOMADA: salvamento periodico a cada 60 segundos.
