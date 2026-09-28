@@ -34,6 +34,58 @@ mantendo total compatibilidade com o v1 existente desde o início.
 Repositório: https://github.com/linuxhell/aria2-ultra
 Branch: `claude/upbeat-cannon-7ovk29`
 
+## Recomendações diretas (leia antes de começar a codar)
+
+Decisões já tomadas e testadas nesta sessão — não precisa reabrir essas
+discussões, só seguir:
+
+1. **Base é o aria2 clássico (`upstream/` como está agora), não o
+   aria2-next.** O usuário já mandou abandonar a linha aria2-next de vez.
+   Se você (ChatGPT) tinha commits nessa branch sobre o fix de Schannel no
+   aria2-next (`a06138b`, `8ccaa8a`, `f770aba`) — eles foram
+   intencionalmente superados por um merge (`139be26`, estratégia
+   "ours"), o histórico continua no git mas **a árvore de arquivos atual
+   é o aria2 clássico**. Não tente reintroduzir o aria2-next nem misturar
+   as duas árvores.
+2. **Nunca altere** `aria2c.exe` (o binário baseline), o script
+   `tests/teste-direto-16-trunc-autosave.cmd`, nem os parâmetros de
+   download direto já validados (`--file-allocation=trunc
+   --auto-save-interval=60 --split=16 --max-connection-per-server=16
+   --min-split-size=1M`). É o "padrão-ouro" de velocidade e já está
+   correto.
+3. **Não reescreva o parsing v1 existente.** Adicione os campos e funções
+   v2 ao lado do que já existe em `TorrentAttribute`/`bittorrent_helper.cc`
+   (extensão, não substituição). Um torrent v1 puro tem que continuar
+   passando pelo mesmo caminho de código de sempre, byte a byte igual.
+4. **Reaproveite infraestrutura existente em vez de reimplementar:**
+   - Hash SHA-256: já existe via `MessageDigest::create("sha-256")`. Não
+     adicione outra lib de hash.
+   - Info-hash v2 = mesmo `bencode2::encode(infoDict)` já usado pro v1,
+     só trocando o algoritmo de hash. Não escreva um bencode-encoder novo.
+   - `FileEntry`/`DownloadContext` já existentes: mapeie o `file tree` do
+     v2 para eles em vez de criar uma estrutura de arquivo paralela.
+5. **Siga a BEP 52 ao pé da letra, com vetores de teste reais.** Não
+   invente formato de árvore de merkle, padding ou magnet v2 por conta
+   própria — implementações que "quase" seguem a spec quebram
+   interoperabilidade com clientes reais (qBittorrent, libtorrent,
+   Transmission). Use torrents de teste v2/híbridos reais e gerados por
+   ferramentas de referência para validar, não só torrents sintéticos
+   escritos à mão.
+6. **Valide cada fase compilando e rodando `make check` no Linux antes de
+   comitar** (autotools funciona aqui, diferente do aria2-next). Não
+   avance de fase com testes quebrando.
+7. **Ordem das fases importa**: não pule pra protocolo peer-wire (Fase 4)
+   antes de ter parsing + hash v2 (Fase 1) e verificação de integridade
+   merkle (Fase 2) sólidos e testados — o resto depende disso estar
+   correto.
+8. **Torrent híbrido é o caso mais delicado**: ele precisa responder
+   corretamente tanto a peers que só falam v1 quanto a peers que só falam
+   v2, ao mesmo tempo, com o mesmo conteúdo de arquivo. Teste sempre os
+   três casos (v1-only, v2-only, híbrido), não só v2-only.
+9. **Só depois da Fase 6 (validação end-to-end)** compile um `aria2c.exe`
+   novo pra Windows e atualize os scripts `.cmd` de teste. Não gere
+   binário novo no meio do caminho com fases incompletas.
+
 ---
 
 ## Por que isso é grande
