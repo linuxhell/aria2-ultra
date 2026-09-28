@@ -60,7 +60,6 @@ _CPack_Packages/
 /aria2-next
 /src/aria2-next
 /src/libaria2.pc
-/src/includes/aria2/aria2.h
 
 # Documentation outputs
 /aria2c.1
