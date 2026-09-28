@@ -402,6 +402,17 @@ HTTP Specific Options
 
   Default: ``true``
 
+.. option:: --tls-skip-revocation-check [true|false]
+
+  On Windows with Schannel, skip certificate revocation checks for HTTPS
+  servers and HTTPS proxies. This can reduce connection setup time when
+  revocation services are slow, but revoked certificates will no longer be
+  rejected on that basis. Certificate chain and hostname checks remain
+  controlled by :option:`--check-certificate`. This option has no effect
+  with other TLS backends.
+
+  Default: ``false``
+
 .. option:: --http-accept-gzip [true|false]
 
   Send ``Accept-Encoding: deflate, gzip`` request header and inflate response if

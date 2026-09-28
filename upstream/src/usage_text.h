@@ -521,6 +521,9 @@
 #define TEXT_CHECK_CERTIFICATE                                          \
   _(" --check-certificate[=true|false] Verify the peer using certificates specified\n" \
     "                              in --ca-certificate option.")
+#define TEXT_TLS_SKIP_REVOCATION_CHECK                                  \
+  _(" --tls-skip-revocation-check[=true|false] Skip Windows Schannel certificate\n" \
+    "                              revocation checks (default: false).")
 #define TEXT_NO_PROXY                                                   \
   _(" --no-proxy=DOMAINS           Specify comma separated hostnames, domains or\n" \
     "                              network address with or without CIDR block where\n" \

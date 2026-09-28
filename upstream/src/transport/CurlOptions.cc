@@ -15,11 +15,16 @@
 
 namespace aria2::http {
 namespace {
-long platformSslOptions() noexcept
+long platformSslOptions(const Option* option) noexcept
 {
 #ifdef _WIN32
+  // Schannel revocation lookups can delay connection setup on some networks.
+  // Allow an explicit speed tradeoff while keeping revocation checks enabled by default.
+  if (option->getAsBool(PREF_TLS_SKIP_REVOCATION_CHECK))
+    return CURLSSLOPT_NO_REVOKE;
   return CURLSSLOPT_REVOKE_BEST_EFFORT;
 #else
+  (void)option;
   return 0L;
 #endif
 }
@@ -66,8 +71,8 @@ CURLcode configureTls(CURL* handle, const Option* option)
   set(CURLOPT_SSL_VERIFYHOST, verify ? 2L : 0L);
   set(CURLOPT_PROXY_SSL_VERIFYPEER, verify);
   set(CURLOPT_PROXY_SSL_VERIFYHOST, verify ? 2L : 0L);
-  set(CURLOPT_SSL_OPTIONS, platformSslOptions());
-  set(CURLOPT_PROXY_SSL_OPTIONS, platformSslOptions());
+  set(CURLOPT_SSL_OPTIONS, platformSslOptions(option));
+  set(CURLOPT_PROXY_SSL_OPTIONS, platformSslOptions(option));
   const auto& minimum = option->get(PREF_MIN_TLS_VERSION);
   const long version = minimum == A2_V_TLS13   ? CURL_SSLVERSION_TLSv1_3
                        : minimum == A2_V_TLS12 ? CURL_SSLVERSION_TLSv1_2

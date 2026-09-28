@@ -85,6 +85,16 @@ void addHttpOptions(OptionHandlers& handlers)
   }
   {
     std::unique_ptr<OptionHandler> op(new BooleanOptionHandler(
+        PREF_TLS_SKIP_REVOCATION_CHECK, TEXT_TLS_SKIP_REVOCATION_CHECK,
+        A2_V_FALSE, OptionHandler::OPT_ARG));
+    op->addTag(TAG_HTTPS);
+    op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    op->setChangeOptionForReserved(true);
+    handlers.push_back(std::move(op));
+  }
+  {
+    std::unique_ptr<OptionHandler> op(new BooleanOptionHandler(
         PREF_ENABLE_HTTP_KEEP_ALIVE, TEXT_ENABLE_HTTP_KEEP_ALIVE, A2_V_TRUE,
         OptionHandler::OPT_ARG));
     op->addTag(TAG_HTTP);

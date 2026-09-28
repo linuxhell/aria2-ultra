@@ -410,6 +410,8 @@ PrefPtr PREF_CA_CERTIFICATE = makePref("ca-certificate");
 // value: true | false
 PrefPtr PREF_CHECK_CERTIFICATE = makePref("check-certificate");
 // value: true | false
+PrefPtr PREF_TLS_SKIP_REVOCATION_CHECK = makePref("tls-skip-revocation-check");
+// value: true | false
 // value: true | false
 PrefPtr PREF_HTTP_NO_CACHE = makePref("http-no-cache");
 // value: true | false

@@ -361,6 +361,8 @@ extern PrefPtr PREF_CA_CERTIFICATE;
 // value: true | false
 extern PrefPtr PREF_CHECK_CERTIFICATE;
 // value: true | false
+extern PrefPtr PREF_TLS_SKIP_REVOCATION_CHECK;
+// value: true | false
 // value: true | false
 extern PrefPtr PREF_HTTP_NO_CACHE;
 // value: true | false
