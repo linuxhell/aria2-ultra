@@ -35,17 +35,15 @@
 #ifndef D_LIBSSL_DH_KEY_EXCHANGE_H
 #define D_LIBSSL_DH_KEY_EXCHANGE_H
 
-#include "common.h"
+#include "MSEDHKeyExchange.h"
 
 #include <openssl/bn.h>
 
 namespace aria2 {
 
-class DHKeyExchange {
+class LibsslDHKeyExchange {
 private:
   BN_CTX* bnCtx_;
-
-  size_t keyLength_;
 
   BIGNUM* prime_;
 
@@ -55,23 +53,29 @@ private:
 
   BIGNUM* publicKey_;
 
+  MSEDHPublicKey publicKeyBytes_;
+
 public:
-  DHKeyExchange();
+  LibsslDHKeyExchange();
 
-  ~DHKeyExchange();
+  explicit LibsslDHKeyExchange(const MSEDHPrivateKey& privateKey);
 
-  void init(const unsigned char* prime, size_t primeBits,
-            const unsigned char* generator, size_t privateKeyBits);
+  LibsslDHKeyExchange(const MSEDHPrivateKey& privateKey,
+                      const char* primeHex);
 
-  void generatePublicKey();
+  ~LibsslDHKeyExchange();
 
-  size_t getPublicKey(unsigned char* out, size_t outLength) const;
+  LibsslDHKeyExchange(const LibsslDHKeyExchange&) = delete;
+  LibsslDHKeyExchange& operator=(const LibsslDHKeyExchange&) = delete;
 
-  void generateNonce(unsigned char* out, size_t outLength) const;
+  const MSEDHPublicKey& getPublicKey() const { return publicKeyBytes_; }
 
-  size_t computeSecret(unsigned char* out, size_t outLength,
-                       const unsigned char* peerPublicKeyData,
-                       size_t peerPublicKeyLength) const;
+  MSEDHPublicKey computeSecret(const MSEDHPublicKey& peerPublicKey) const;
+
+private:
+  void initialize(const MSEDHPrivateKey* privateKey, const char* primeHex);
+  MSEDHPublicKey exportNumber(const BIGNUM* number) const;
+  void clear() noexcept;
 };
 
 } // namespace aria2

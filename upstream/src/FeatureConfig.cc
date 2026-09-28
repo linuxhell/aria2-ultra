@@ -32,7 +32,24 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 #include "FeatureConfig.h"
+#include "common.h"
+#include <cstdint>
+#include <curl/curlver.h>
+#include <string>
+#include <gpac/setup.h>
+#include <gpac/version.h>
+extern "C" {
+#include <libavutil/avutil.h>
+}
+
+#include <curl/curl.h>
+#include <nghttp2/nghttp2ver.h>
+#include <spdlog/version.h>
+#include <boost/version.hpp>
 
 #include <sstream>
 #include <cstring>
@@ -40,37 +57,23 @@
 #ifdef HAVE_ZLIB
 #  include <zlib.h>
 #endif // HAVE_ZLIB
-#ifdef HAVE_LIBXML2
-#  include <libxml/xmlversion.h>
-#endif // HAVE_LIBXML2
 #ifdef HAVE_LIBEXPAT
 #  include <expat.h>
 #endif // HAVE_LIBEXPAT
 #ifdef HAVE_SQLITE3
 #  include <sqlite3.h>
 #endif // HAVE_SQLITE3
-#ifdef HAVE_LIBGNUTLS
-#  include <gnutls/gnutls.h>
-#endif // HAVE_LIBGNUTLS
-#ifdef HAVE_OPENSSL
+#ifdef HAVE_OPENSSL_CRYPTO
 #  include <openssl/opensslv.h>
-#endif // HAVE_OPENSSL
-#ifdef HAVE_LIBGMP
-#  include <gmp.h>
-#endif // HAVE_LIBGMP
-#ifdef HAVE_LIBGCRYPT
-#  include <gcrypt.h>
-#endif // HAVE_LIBGCRYPT
-#ifdef HAVE_LIBCARES
-#  include <ares.h>
-#endif // HAVE_LIBCARES
+#endif // HAVE_OPENSSL_CRYPTO
 #ifdef HAVE_SYS_UTSNAME_H
 #  include <sys/utsname.h>
 #endif // HAVE_SYS_UTSNAME_H
-#ifdef HAVE_LIBSSH2
-#  include <libssh2.h>
-#endif // HAVE_LIBSSH2
-#include "util.h"
+#ifdef ENABLE_BITTORRENT
+#  include <libtorrent/version.hpp>
+#endif
+#include "a2functional.h"
+#include "fmt.h"
 
 namespace aria2 {
 
@@ -81,9 +84,6 @@ uint16_t getDefaultPort(const std::string& protocol)
   }
   else if (protocol == "https") {
     return 443;
-  }
-  else if (protocol == "ftp") {
-    return 21;
   }
   else if (protocol == "sftp") {
     return 22;
@@ -116,11 +116,7 @@ const char* strSupportedFeature(int feature)
 {
   switch (feature) {
   case (FEATURE_ASYNC_DNS):
-#ifdef ENABLE_ASYNC_DNS
     return "Async DNS";
-#else  // !ENABLE_ASYNC_DNS
-    return nullptr;
-#endif // !ENABLE_ASYNC_DNS
     break;
 
   case (FEATURE_BITTORRENT):
@@ -131,12 +127,8 @@ const char* strSupportedFeature(int feature)
 #endif // !ENABLE_BITTORRENT
     break;
 
-  case (FEATURE_FF3_COOKIE):
-#ifdef HAVE_SQLITE3
-    return "Firefox3 Cookie";
-#else  // !HAVE_SQLITE3
-    return nullptr;
-#endif // !HAVE_SQLITE3
+  case (FEATURE_ED2K):
+    return "ED2K";
     break;
 
   case (FEATURE_GZIP):
@@ -148,11 +140,7 @@ const char* strSupportedFeature(int feature)
     break;
 
   case (FEATURE_HTTPS):
-#ifdef ENABLE_SSL
     return "HTTPS";
-#else  // !ENABLE_SSL
-    return nullptr;
-#endif // !ENABLE_SSL
     break;
 
   case (FEATURE_MESSAGE_DIGEST):
@@ -176,11 +164,9 @@ const char* strSupportedFeature(int feature)
     break;
 
   case (FEATURE_SFTP):
-#ifdef HAVE_LIBSSH2
     return "SFTP";
-#else  // !HAVE_LIBSSH2
-    return nullptr;
-#endif // !HAVE_LIBSSH2
+  case FEATURE_MEDIA:
+    return "HLS/DASH";
     break;
 
   default:
@@ -191,12 +177,28 @@ const char* strSupportedFeature(int feature)
 std::string usedLibs()
 {
   std::string res;
+  res += std::string("GPAC/") + GPAC_VERSION + " FFmpeg/" + av_version_info() +
+         " ";
+  res += fmt("spdlog/%d.%d.%d ", SPDLOG_VER_MAJOR, SPDLOG_VER_MINOR,
+             SPDLOG_VER_PATCH);
+  res += "libcurl/" LIBCURL_VERSION;
+  if (const auto version = curl_version_info(CURLVERSION_NOW); version) {
+    res += "(";
+    if (version->ssl_version) {
+      res += version->ssl_version;
+      res += ";";
+    }
+    res += (version->features & CURL_VERSION_ASYNCHDNS) ? "threaded DNS"
+                                                        : "sync DNS";
+    res += ")";
+  }
+  res += " ";
+  res += fmt("Boost/%d.%d.%d ", BOOST_VERSION / 100000,
+             BOOST_VERSION / 100 % 1000, BOOST_VERSION % 100);
+  res += "nghttp2/" NGHTTP2_VERSION " ";
 #ifdef HAVE_ZLIB
   res += "zlib/" ZLIB_VERSION " ";
 #endif // HAVE_ZLIB
-#ifdef HAVE_LIBXML2
-  res += "libxml2/" LIBXML_DOTTED_VERSION " ";
-#endif // HAVE_LIBXML2
 #ifdef HAVE_LIBEXPAT
   res += fmt("expat/%d.%d.%d ", XML_MAJOR_VERSION, XML_MINOR_VERSION,
              XML_MICRO_VERSION);
@@ -204,42 +206,13 @@ std::string usedLibs()
 #ifdef HAVE_SQLITE3
   res += "sqlite3/" SQLITE_VERSION " ";
 #endif // HAVE_SQLITE3
-#ifdef HAVE_APPLETLS
-  res += "AppleTLS ";
-#endif // HAVE_APPLETLS
-#ifdef HAVE_WINTLS
-  res += "WinTLS ";
-#endif // HAVE_WINTLS
-#ifdef HAVE_LIBGNUTLS
-  res += "GnuTLS/" GNUTLS_VERSION " ";
-#endif // HAVE_LIBGNUTLS
-#ifdef HAVE_OPENSSL
-  res += fmt("OpenSSL/%ld.%ld.%ld", OPENSSL_VERSION_NUMBER >> 28,
-             (OPENSSL_VERSION_NUMBER >> 20) & 0xff,
-             (OPENSSL_VERSION_NUMBER >> 12) & 0xff);
-  if ((OPENSSL_VERSION_NUMBER >> 4) & 0xff) {
-    res += 'a' + ((OPENSSL_VERSION_NUMBER >> 4) & 0xff) - 1;
-  }
-  res += " ";
-#endif // HAVE_OPENSSL
-#ifdef HAVE_LIBNETTLE
-  // No library version in header files.
-  res += "nettle ";
-#endif // HAVE_LIBNETTLE
-#ifdef HAVE_LIBGMP
-  res += fmt("GMP/%d.%d.%d ", __GNU_MP_VERSION, __GNU_MP_VERSION_MINOR,
-             __GNU_MP_VERSION_PATCHLEVEL);
-#endif // HAVE_LIBGMP
-#ifdef HAVE_LIBGCRYPT
-  res += "libgcrypt/" GCRYPT_VERSION " ";
-#endif // HAVE_LIBGCRYPT
-#ifdef HAVE_LIBCARES
-  res += "c-ares/" ARES_VERSION_STR " ";
-#endif // HAVE_LIBCARES
-
-#ifdef HAVE_LIBSSH2
-  res += "libssh2/" LIBSSH2_VERSION " ";
-#endif // HAVE_LIBSSH2
+#ifdef HAVE_OPENSSL_CRYPTO
+  res += "OpenSSL/" OPENSSL_VERSION_STR " ";
+#endif // HAVE_OPENSSL_CRYPTO
+#ifdef ENABLE_BITTORRENT
+  res += fmt("libtorrent/%d.%d.%d ", LIBTORRENT_VERSION_MAJOR,
+             LIBTORRENT_VERSION_MINOR, LIBTORRENT_VERSION_TINY);
+#endif
 
   if (!res.empty()) {
     res.erase(res.length() - 1);
@@ -295,8 +268,6 @@ std::string usedCompilerAndPlatform()
   if (strcmp(BUILD, TARGET)) {
     rv << "\n  targeting " << TARGET;
   }
-  rv << "\n  on        " << __DATE__ << " " << __TIME__;
-
   return rv.str();
 }
 

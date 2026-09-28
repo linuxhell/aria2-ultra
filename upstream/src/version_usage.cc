@@ -32,13 +32,14 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
+#include "console.h"
+#include <memory>
+#include <string>
+#include <vector>
 #include "common.h"
 
 #include <iostream>
-#include <iterator>
-#include <algorithm>
 
-#include "a2io.h"
 #include "FeatureConfig.h"
 #include "MessageDigest.h"
 #include "help_tags.h"
@@ -46,7 +47,6 @@
 #include "fmt.h"
 #include "OptionParser.h"
 #include "OptionHandler.h"
-#include "util.h"
 
 namespace aria2 {
 
@@ -54,7 +54,10 @@ void showVersion()
 {
   std::cout
       << PACKAGE << _(" version ") << PACKAGE_VERSION << "\n"
-      << "Copyright (C) 2006, 2019 Tatsuhiro Tsujikawa"
+      << "Maintained since 2026 by AnInsomniacy for Rayburst and "
+         "standalone users."
+      << "\n"
+      << "Original aria2 copyright: 2006, 2019 Tatsuhiro Tsujikawa."
       << "\n"
       << "\n"
       << _("This program is free software; you can redistribute it and/or "
@@ -84,12 +87,12 @@ void showVersion()
 void showUsage(const std::string& keyword,
                const std::shared_ptr<OptionParser>& oparser, const Console& out)
 {
-  out->printf(_("Usage: aria2c [OPTIONS] [URI | MAGNET | TORRENT_FILE |"
-                " METALINK_FILE]..."));
+  out->printf(_("Usage: aria2-next [OPTIONS] [URI | MAGNET | ED2K_LINK |"
+                " TORRENT_FILE | METALINK_FILE]..."));
   out->printf("\n");
   if (keyword.empty()) {
     // Very short version of usage.
-    out->printf(_("See 'aria2c -h'."));
+    out->printf(_("See 'aria2-next -h'."));
     out->printf("\n");
     return;
   }
@@ -103,7 +106,7 @@ void showUsage(const std::string& keyword,
     else {
       out->printf(_("Printing options tagged with '%s'."), keyword.c_str());
       out->printf("\n");
-      out->printf(_("See 'aria2c -h#help' to know all available tags."));
+      out->printf(_("See 'aria2-next -h#help' to know all available tags."));
     }
     out->printf("\n");
     out->printf(_("Options:"));
@@ -139,23 +142,23 @@ void showUsage(const std::string& keyword,
     }
   }
   if (keyword == strHelpTag(TAG_BASIC)) {
-    out->printf("URI, MAGNET, TORRENT_FILE, METALINK_FILE:\n");
+    out->printf("URI, MAGNET, ED2K_LINK, TORRENT_FILE, METALINK_FILE:\n");
     out->printf(
-        _(" You can specify multiple HTTP(S)/FTP URIs. Unless you specify -Z "
+        _(" You can specify multiple HTTP(S)/SFTP URIs. Unless you specify -Z "
           "option, all\n"
           " URIs must point to the same file or downloading will fail."));
     out->printf("\n");
     out->printf(_(" You can also specify arbitrary number of BitTorrent Magnet "
-                  "URIs, torrent/\n"
-                  " metalink files stored in a local drive. Please note that "
-                  "they are always\n"
-                  " treated as a separate download."));
+                  "URIs, ED2K file\n"
+                  " links, torrent/metalink files stored in a local drive. "
+                  "Please note that they\n"
+                  " are always treated as a separate download."));
     out->printf("\n\n");
     out->printf(_(" You can specify both torrent file with -T option and URIs. "
                   "By doing this,\n"
-                  " download a file from both torrent swarm and HTTP/FTP "
+                  " download a file from both torrent swarm and HTTP/SFTP "
                   "server at the same time,\n"
-                  " while the data from HTTP/FTP are uploaded to the torrent "
+                  " while the data from HTTP/SFTP are uploaded to the torrent "
                   "swarm. For single file\n"
                   " torrents, URI can be a complete URI pointing to the "
                   "resource or if URI ends\n"
@@ -168,15 +171,6 @@ void showUsage(const std::string& keyword,
                   " contains \"&\" or any characters that have special meaning "
                   "in shell."));
     out->printf("\n\n");
-    out->printf(
-        _("About the number of connections\n"
-          " Since 1.10.0 release, aria2 uses 1 connection per host by default "
-          "and has 20MiB\n"
-          " segment size restriction. So whatever value you specify using -s "
-          "option, it\n"
-          " uses 1 connection per host. To make it behave like 1.9.x, use\n"
-          " --max-connection-per-server=4 --min-split-size=1M.\n"
-          "\n"));
   }
   out->printf(_("Refer to man page for more information."));
   out->printf("\n");

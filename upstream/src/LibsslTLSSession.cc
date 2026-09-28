@@ -33,25 +33,20 @@
  */
 /* copyright --> */
 #include "LibsslTLSSession.h"
+#include "LibsslTLSContext.h"
+#include "TLSContext.h"
+#include "TLSSession.h"
+#include "a2netcompat.h"
+#include <cstddef>
+#include <openssl/crypto.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
+#include <string>
+#include "OpenSslDiagnostics.h"
 
 #include <openssl/err.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-
-#include "LogFactory.h"
-#include "util.h"
-#include "SocketCore.h"
-
 namespace aria2 {
-
-#if !OPENSSL_101_API
-namespace {
-const unsigned char* ASN1_STRING_get0_data(ASN1_STRING* x)
-{
-  return ASN1_STRING_data(x);
-}
-} // namespace
-#endif // !OPENSSL_101_API
 
 TLSSession* TLSSession::make(TLSContext* ctx)
 {
@@ -81,18 +76,7 @@ int OpenSSLTLSSession::init(sock_t sockfd)
   if (rv_ == 0) {
     return TLS_ERR_ERROR;
   }
-  return TLS_ERR_OK;
-}
-
-int OpenSSLTLSSession::setSNIHostname(const std::string& hostname)
-{
-#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-  ERR_clear_error();
-  // TLS extensions: SNI.  There is not documentation about the
-  // return code for this function (actually this is macro
-  // wrapping SSL_ctrl at the time of this writing).
-  SSL_set_tlsext_host_name(ssl_, hostname.c_str());
-#endif // SSL_CTRL_SET_TLSEXT_HOSTNAME
+  SSL_set_accept_state(ssl_);
   return TLS_ERR_OK;
 }
 
@@ -168,15 +152,10 @@ ssize_t OpenSSLTLSSession::readData(void* data, size_t len)
   return ret;
 }
 
-int OpenSSLTLSSession::handshake(TLSVersion& version)
+int OpenSSLTLSSession::tlsAccept(TLSVersion& version)
 {
   ERR_clear_error();
-  if (tlsContext_->getSide() == TLS_CLIENT) {
-    rv_ = SSL_connect(ssl_);
-  }
-  else {
-    rv_ = SSL_accept(ssl_);
-  }
+  rv_ = SSL_accept(ssl_);
   if (rv_ <= 0) {
     int sslError = SSL_get_error(ssl_, rv_);
     switch (sslError) {
@@ -221,119 +200,9 @@ int OpenSSLTLSSession::handshake(TLSVersion& version)
   return TLS_ERR_OK;
 }
 
-int OpenSSLTLSSession::tlsConnect(const std::string& hostname,
-                                  TLSVersion& version,
-                                  std::string& handshakeErr)
+size_t OpenSSLTLSSession::getRecvBufferedLength()
 {
-  handshakeErr = "";
-  int ret;
-  ret = handshake(version);
-  if (ret != TLS_ERR_OK) {
-    return ret;
-  }
-  if (tlsContext_->getSide() == TLS_CLIENT && tlsContext_->getVerifyPeer()) {
-    // verify peer
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-    auto peerCert = SSL_get1_peer_certificate(ssl_);
-#else  // !(OPENSSL_VERSION_NUMBER >= 0x30000000L)
-    auto peerCert = SSL_get_peer_certificate(ssl_);
-#endif // !(OPENSSL_VERSION_NUMBER >= 0x30000000L)
-    if (!peerCert) {
-      handshakeErr = "certificate not found";
-      return TLS_ERR_ERROR;
-    }
-    std::unique_ptr<X509, decltype(&X509_free)> certDeleter(peerCert,
-                                                            X509_free);
-    long verifyResult = SSL_get_verify_result(ssl_);
-    if (verifyResult != X509_V_OK) {
-      handshakeErr = X509_verify_cert_error_string(verifyResult);
-      return TLS_ERR_ERROR;
-    }
-    std::string commonName;
-    std::vector<std::string> dnsNames;
-    std::vector<std::string> ipAddrs;
-    GENERAL_NAMES* altNames;
-    altNames = reinterpret_cast<GENERAL_NAMES*>(
-        X509_get_ext_d2i(peerCert, NID_subject_alt_name, nullptr, NULL));
-    if (altNames) {
-      std::unique_ptr<GENERAL_NAMES, decltype(&GENERAL_NAMES_free)>
-          altNamesDeleter(altNames, GENERAL_NAMES_free);
-      size_t n = sk_GENERAL_NAME_num(altNames);
-      for (size_t i = 0; i < n; ++i) {
-        const GENERAL_NAME* altName = sk_GENERAL_NAME_value(altNames, i);
-        if (altName->type == GEN_DNS) {
-          auto name = ASN1_STRING_get0_data(altName->d.ia5);
-          if (!name) {
-            continue;
-          }
-          size_t len = ASN1_STRING_length(altName->d.ia5);
-          if (len == 0) {
-            continue;
-          }
-          if (name[len - 1] == '.') {
-            --len;
-            if (len == 0) {
-              continue;
-            }
-          }
-          dnsNames.push_back(std::string(name, name + len));
-        }
-        else if (altName->type == GEN_IPADD) {
-          const unsigned char* ipAddr = altName->d.iPAddress->data;
-          if (!ipAddr) {
-            continue;
-          }
-          size_t len = altName->d.iPAddress->length;
-          ipAddrs.push_back(
-              std::string(reinterpret_cast<const char*>(ipAddr), len));
-        }
-      }
-    }
-    X509_NAME* subjectName = X509_get_subject_name(peerCert);
-    if (!subjectName) {
-      handshakeErr = "could not get X509 name object from the certificate.";
-      return TLS_ERR_ERROR;
-    }
-    int lastpos = -1;
-    while (1) {
-      lastpos =
-          X509_NAME_get_index_by_NID(subjectName, NID_commonName, lastpos);
-      if (lastpos == -1) {
-        break;
-      }
-      X509_NAME_ENTRY* entry = X509_NAME_get_entry(subjectName, lastpos);
-      unsigned char* out;
-      int outlen = ASN1_STRING_to_UTF8(&out, X509_NAME_ENTRY_get_data(entry));
-      if (outlen < 0) {
-        continue;
-      }
-      if (outlen == 0) {
-        OPENSSL_free(out);
-        continue;
-      }
-      if (out[outlen - 1] == '.') {
-        --outlen;
-        if (outlen == 0) {
-          OPENSSL_free(out);
-          continue;
-        }
-      }
-      commonName.assign(&out[0], &out[outlen]);
-      OPENSSL_free(out);
-      break;
-    }
-    if (!net::verifyHostname(hostname, dnsNames, ipAddrs, commonName)) {
-      handshakeErr = "hostname does not match";
-      return TLS_ERR_ERROR;
-    }
-  }
-
-  return TLS_ERR_OK;
-}
-
-int OpenSSLTLSSession::tlsAccept(TLSVersion& version)
-{
-  return handshake(version);
+  return ssl_ ? static_cast<size_t>(SSL_pending(ssl_)) : 0;
 }
 
 std::string OpenSSLTLSSession::getLastErrorString()
@@ -348,8 +217,7 @@ std::string OpenSSLTLSSession::getLastErrorString()
     case SSL_ERROR_ZERO_RETURN:
       return "";
     case SSL_ERROR_SYSCALL: {
-      int err = ERR_get_error();
-      if (err == 0) {
+      if (ERR_peek_error() == 0) {
         if (rv_ == 0) {
           return "EOF was received";
         }
@@ -361,11 +229,18 @@ std::string OpenSSLTLSSession::getLastErrorString()
         }
       }
       else {
-        return ERR_error_string(err, nullptr);
+        return openssl::errorStack();
       }
     }
     case SSL_ERROR_SSL:
-      return "protocol error";
+      if (const auto verifyResult = SSL_get_verify_result(ssl_);
+          verifyResult != X509_V_OK) {
+        return X509_verify_cert_error_string(verifyResult);
+      }
+      if (ERR_peek_error() != 0) {
+        return openssl::errorStack();
+      }
+      return "TLS protocol error";
     default:
       return "unknown error";
     }

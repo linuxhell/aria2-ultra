@@ -45,6 +45,7 @@
 #include <aria2/aria2.h>
 
 #include "prefs.h"
+#include "options/OptionCatalog.h"
 
 namespace aria2 {
 
@@ -53,7 +54,7 @@ class OptionHandler;
 
 class OptionParser {
 private:
-  std::vector<OptionHandler*> handlers_;
+  OptionHandlers handlers_;
   // Index of handler in handlers_ for option who has short option name.
   std::vector<size_t> shortOpts_;
   static std::shared_ptr<OptionParser> optionParser_;
@@ -70,13 +71,15 @@ public:
 
   void parse(Option& option, std::istream& ios) const;
 
+  void parseInternal(Option& option, std::istream& ios) const;
+
   void parse(Option& option, const KeyVals& options) const;
 
   void parseDefaultValues(Option& option) const;
 
-  void setOptionHandlers(const std::vector<OptionHandler*>& handlers);
+  void setOptionHandlers(OptionHandlers handlers);
 
-  void addOptionHandler(OptionHandler* handler);
+  void addOptionHandler(std::unique_ptr<OptionHandler> handler);
 
   // Hidden options are not returned.
   std::vector<const OptionHandler*> findByTag(uint32_t tag) const;
@@ -93,6 +96,8 @@ public:
 
   // Hidden options are not returned.
   const OptionHandler* findById(size_t id) const;
+
+  const OptionHandler* findByIdInternal(size_t id) const;
 
   // Hidden options are not returned.
   const OptionHandler* findByShortName(char shortName) const;

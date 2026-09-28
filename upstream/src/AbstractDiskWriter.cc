@@ -32,7 +32,21 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 #include "AbstractDiskWriter.h"
+#include "RecoverableException.h"
+#include <algorithm>
+#include <cinttypes>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <limits>
+#include <string>
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 
 #include <unistd.h>
 #ifdef HAVE_MMAP
@@ -45,14 +59,17 @@
 #include <cassert>
 
 #include "File.h"
-#include "util.h"
+#include "support/FilePath.h"
+#include "platform/Process.h"
+#include "platform/NativeText.h"
+#include "a2functional.h"
+#include "fmt.h"
 #include "message.h"
 #include "DlAbortEx.h"
 #include "a2io.h"
-#include "fmt.h"
 #include "DownloadFailureException.h"
 #include "error_code.h"
-#include "LogFactory.h"
+#include "Log.h"
 
 namespace aria2 {
 
@@ -150,7 +167,7 @@ void AbstractDiskWriter::closeFile()
                        fileStrerror(errNum).c_str()));
     }
     else {
-      A2_LOG_INFO(fmt("Unmapping file %s succeeded", filename_.c_str()));
+      A2_LOG_DEBUG(fmt("Unmapping file %s succeeded", filename_.c_str()));
     }
     mapaddr_ = nullptr;
     maplen_ = 0;
@@ -251,6 +268,14 @@ void AbstractDiskWriter::createFile(int addFlags)
   util::mkdirs(File(filename_).getDirname());
   fd_ = openFileWithFlags(filename_,
                           O_CREAT | O_RDWR | O_TRUNC | O_BINARY | addFlags,
+                          error_code::FILE_CREATE_ERROR);
+}
+
+void AbstractDiskWriter::openNewFile()
+{
+  assert(!filename_.empty());
+  util::mkdirs(File(filename_).getDirname());
+  fd_ = openFileWithFlags(filename_, O_CREAT | O_EXCL | O_RDWR | O_BINARY,
                           error_code::FILE_CREATE_ERROR);
 }
 
@@ -412,7 +437,7 @@ void AbstractDiskWriter::ensureMmapWrite(size_t len, int64_t offset)
         }
 #  endif // !__MINGW32__
         if (mapaddr_) {
-          A2_LOG_DEBUG(fmt("Mapping file %s succeeded, length=%" PRId64 "",
+          A2_LOG_TRACE(fmt("Mapping file %s succeeded, length=%" PRId64 "",
                            filename_.c_str(), static_cast<uint64_t>(filesize)));
           maplen_ = filesize;
         }
@@ -505,29 +530,14 @@ void AbstractDiskWriter::allocate(int64_t offset, int64_t length, bool sparse)
     throw DL_ABORT_EX("File not yet opened.");
   }
   if (sparse) {
-#ifdef __MINGW32__
-    DWORD bytesReturned;
-    if (!DeviceIoControl(fd_, FSCTL_SET_SPARSE, 0, 0, 0, 0, &bytesReturned,
-                         0)) {
-      A2_LOG_WARN(fmt("Making file sparse failed or pending: %s",
-                      fileStrerror(GetLastError()).c_str()));
-    }
-#endif // __MINGW32__
+    enableSparse();
     truncate(offset + length);
     return;
   }
 #ifdef HAVE_SOME_FALLOCATE
 #  ifdef __MINGW32__
+  enableSparse();
   truncate(offset + length);
-  if (!SetFileValidData(fd_, offset + length)) {
-    auto errNum = fileError();
-    A2_LOG_WARN(fmt(
-        "File allocation (SetFileValidData) failed (cause: %s). File will be "
-        "allocated by filling zero, which blocks whole aria2 execution. Run "
-        "aria2 as an administrator or use a different file allocation method "
-        "(see --file-allocation).",
-        fileStrerror(errNum).c_str()));
-  }
 #  elif defined(__APPLE__) && defined(__MACH__)
   const auto toalloc = offset + length - size();
   fstore_t fstore = {F_ALLOCATECONTIG | F_ALLOCATEALL, F_PEOFPOSMODE, 0,
@@ -573,6 +583,20 @@ void AbstractDiskWriter::allocate(int64_t offset, int64_t length, bool sparse)
 #    error "no *_fallocate function available."
 #  endif
 #endif // HAVE_SOME_FALLOCATE
+}
+
+void AbstractDiskWriter::enableSparse()
+{
+  if (fd_ == A2_BAD_FD) {
+    throw DL_ABORT_EX("File not yet opened.");
+  }
+#ifdef __MINGW32__
+  DWORD bytesReturned;
+  if (!DeviceIoControl(fd_, FSCTL_SET_SPARSE, 0, 0, 0, 0, &bytesReturned, 0)) {
+    A2_LOG_WARN(fmt("Making file sparse failed or pending: %s",
+                    fileStrerror(GetLastError()).c_str()));
+  }
+#endif // __MINGW32__
 }
 
 int64_t AbstractDiskWriter::size() { return File(filename_).size(); }

@@ -40,9 +40,9 @@
 #include <numeric>
 
 #include "Command.h"
-#include "LogFactory.h"
-#include "Logger.h"
-#include "util.h"
+#include "Log.h"
+#include "platform/Process.h"
+#include "a2functional.h"
 #include "fmt.h"
 
 #ifdef KEVENT_UDATA_INTPTR_T
@@ -54,7 +54,7 @@
 namespace aria2 {
 
 KqueueEventPoll::KSocketEntry::KSocketEntry(sock_t s)
-    : SocketEntry<KCommandEvent, KADNSEvent>(s)
+    : SocketEntry<KCommandEvent>(s)
 {
 }
 
@@ -66,16 +66,8 @@ int accumulateEvent(int events, const KqueueEventPoll::KEvent& event)
 size_t KqueueEventPoll::KSocketEntry::getEvents(struct kevent* eventlist)
 {
   int events;
-#ifdef ENABLE_ASYNC_DNS
-  events =
-      std::accumulate(adnsEvents_.begin(), adnsEvents_.end(),
-                      std::accumulate(commandEvents_.begin(),
-                                      commandEvents_.end(), 0, accumulateEvent),
-                      accumulateEvent);
-#else  // !ENABLE_ASYNC_DNS
   events = std::accumulate(commandEvents_.begin(), commandEvents_.end(), 0,
                            accumulateEvent);
-#endif // !ENABLE_ASYNC_DNS
   EV_SET(&eventlist[0], socket_, EVFILT_READ,
          EV_ADD |
              ((events & KqueueEventPoll::IEV_READ) ? EV_ENABLE : EV_DISABLE),
@@ -133,23 +125,8 @@ void KqueueEventPoll::poll(const struct timeval& tv)
   }
   else if (res == -1) {
     int errNum = errno;
-    A2_LOG_INFO(fmt("kevent error: %s", util::safeStrerror(errNum).c_str()));
+    A2_LOG_DEBUG(fmt("kevent error: %s", util::safeStrerror(errNum).c_str()));
   }
-#ifdef ENABLE_ASYNC_DNS
-  // It turns out that we have to call ares_process_fd before ares's
-  // own timeout and ares may create new sockets or closes socket in
-  // their API. So we call ares_process_fd for all ares_channel and
-  // re-register their sockets.
-  for (auto& r : nameResolverEntries_) {
-    auto& ent = r.second;
-    ent.processTimeout();
-    ent.removeSocketEvents(this);
-    ent.addSocketEvents(this);
-  }
-#endif // ENABLE_ASYNC_DNS
-
-  // TODO timeout of name resolver is determined in Command(AbstractCommand,
-  // DHTEntryPoint...Command)
 }
 
 namespace {
@@ -192,7 +169,7 @@ bool KqueueEventPoll::addEvents(sock_t socket,
   r = kevent(kqfd_, changelist, n, changelist, 0, &zeroTimeout);
   int errNum = errno;
   if (r == -1) {
-    A2_LOG_DEBUG(fmt("Failed to add socket event %d:%s", socket,
+    A2_LOG_TRACE(fmt("Failed to add socket event %d:%s", socket,
                      util::safeStrerror(errNum).c_str()));
     return false;
   }
@@ -208,20 +185,12 @@ bool KqueueEventPoll::addEvents(sock_t socket, Command* command,
   return addEvents(socket, KCommandEvent(command, kqEvents));
 }
 
-#ifdef ENABLE_ASYNC_DNS
-bool KqueueEventPoll::addEvents(sock_t socket, Command* command, int events,
-                                const std::shared_ptr<AsyncNameResolver>& rs)
-{
-  return addEvents(socket, KADNSEvent(rs, command, socket, events));
-}
-#endif // ENABLE_ASYNC_DNS
-
 bool KqueueEventPoll::deleteEvents(sock_t socket,
                                    const KqueueEventPoll::KEvent& event)
 {
   auto i = socketEntries_.find(socket);
   if (i == std::end(socketEntries_)) {
-    A2_LOG_DEBUG(fmt("Socket %d is not found in SocketEntries.", socket));
+    A2_LOG_TRACE(fmt("Socket %d is not found in SocketEntries.", socket));
     return false;
   }
 
@@ -237,8 +206,10 @@ bool KqueueEventPoll::deleteEvents(sock_t socket,
     socketEntries_.erase(i);
   }
   if (r == -1) {
-    A2_LOG_DEBUG(fmt("Failed to delete socket event:%s",
-                     util::safeStrerror(errNum).c_str()));
+    if (errNum != EBADF && errNum != ENOENT) {
+      A2_LOG_DEBUG(fmt("Failed to delete kqueue socket event: %s",
+                       util::safeStrerror(errNum).c_str()));
+    }
     return false;
   }
   else {
@@ -246,51 +217,11 @@ bool KqueueEventPoll::deleteEvents(sock_t socket,
   }
 }
 
-#ifdef ENABLE_ASYNC_DNS
-bool KqueueEventPoll::deleteEvents(sock_t socket, Command* command,
-                                   const std::shared_ptr<AsyncNameResolver>& rs)
-{
-  return deleteEvents(socket, KADNSEvent(rs, command, socket, 0));
-}
-#endif // ENABLE_ASYNC_DNS
-
 bool KqueueEventPoll::deleteEvents(sock_t socket, Command* command,
                                    EventPoll::EventType events)
 {
   int kqEvents = translateEvents(events);
   return deleteEvents(socket, KCommandEvent(command, kqEvents));
 }
-
-#ifdef ENABLE_ASYNC_DNS
-bool KqueueEventPoll::addNameResolver(
-    const std::shared_ptr<AsyncNameResolver>& resolver, Command* command)
-{
-  auto key = std::make_pair(resolver.get(), command);
-  auto itr = nameResolverEntries_.lower_bound(key);
-
-  if (itr != std::end(nameResolverEntries_) && (*itr).first == key) {
-    return false;
-  }
-
-  itr = nameResolverEntries_.insert(
-      itr, std::make_pair(key, KAsyncNameResolverEntry(resolver, command)));
-  (*itr).second.addSocketEvents(this);
-  return true;
-}
-
-bool KqueueEventPoll::deleteNameResolver(
-    const std::shared_ptr<AsyncNameResolver>& resolver, Command* command)
-{
-  auto key = std::make_pair(resolver.get(), command);
-  auto itr = nameResolverEntries_.find(key);
-  if (itr == std::end(nameResolverEntries_)) {
-    return false;
-  }
-
-  (*itr).second.removeSocketEvents(this);
-  nameResolverEntries_.erase(itr);
-  return true;
-}
-#endif // ENABLE_ASYNC_DNS
 
 } // namespace aria2

@@ -58,6 +58,9 @@ public:
   // default implementation does nothing. If sparse is true, the
   // implementation may create sparse file (with holes).
   virtual void allocate(int64_t offset, int64_t length, bool sparse) {}
+
+  // Marks the underlying stream sparse without changing its length.
+  virtual void enableSparse() {}
 };
 
 } // namespace aria2

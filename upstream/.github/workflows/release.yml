@@ -1,0 +1,329 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      build_profile:
+        description: "Manual validation build profile. Official releases always use release."
+        required: false
+        default: release
+        type: choice
+        options: [release, debug]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    name: Resolve Release Version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      build_profile: ${{ steps.resolve.outputs.build_profile }}
+      cmake_build_type: ${{ steps.resolve.outputs.cmake_build_type }}
+      artifact_suffix: ${{ steps.resolve.outputs.artifact_suffix }}
+      strip_binary: ${{ steps.resolve.outputs.strip_binary }}
+      windows_debug_map_flags: ${{ steps.resolve.outputs.windows_debug_map_flags }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Resolve release version
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REQUESTED_BUILD_PROFILE: ${{ github.event.inputs.build_profile }}
+        run: |
+          VERSION=$(sed -n 's/^  VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -n 1)
+          printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if [ "$EVENT_NAME" = release ]; then
+            BUILD_PROFILE=release
+            TAG_VERSION=${RELEASE_TAG#v}
+            if [ "$VERSION" != "$TAG_VERSION" ]; then
+              echo "Release tag $RELEASE_TAG does not match project version $VERSION" >&2
+              exit 1
+            fi
+          else
+            BUILD_PROFILE=${REQUESTED_BUILD_PROFILE:-release}
+          fi
+
+          case "$BUILD_PROFILE" in
+            release)
+              CMAKE_BUILD_TYPE=Release
+              ARTIFACT_SUFFIX=
+              STRIP_BINARY=true
+              WINDOWS_DEBUG_MAP_FLAGS=
+              ;;
+            debug)
+              CMAKE_BUILD_TYPE=RelWithDebInfo
+              ARTIFACT_SUFFIX=-debug
+              STRIP_BINARY=false
+              WINDOWS_DEBUG_MAP_FLAGS="-Wl,-Map,aria2-next.map"
+              ;;
+            *)
+              echo "Invalid build profile: $BUILD_PROFILE" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "version=$VERSION"
+            echo "build_profile=$BUILD_PROFILE"
+            echo "cmake_build_type=$CMAKE_BUILD_TYPE"
+            echo "artifact_suffix=$ARTIFACT_SUFFIX"
+            echo "strip_binary=$STRIP_BINARY"
+            echo "windows_debug_map_flags=$WINDOWS_DEBUG_MAP_FLAGS"
+          } >> "$GITHUB_OUTPUT"
+
+  build-native:
+    name: ${{ matrix.name }}
+    needs: resolve-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            platform: linux
+            verify_profile: linux
+            processor: x86_64
+            artifact: linux-x86_64
+          - name: Linux ARM64
+            runner: ubuntu-22.04-arm
+            platform: linux
+            verify_profile: linux
+            processor: aarch64
+            artifact: linux-aarch64
+          - name: macOS ARM64
+            runner: macos-15
+            platform: macos
+            verify_profile: macos
+            processor: arm64
+            artifact: macos-arm64
+          - name: macOS Intel
+            runner: macos-15-intel
+            platform: macos
+            verify_profile: macos
+            processor: x86_64
+            artifact: macos-x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      ARIA2_BUILD_PROFILE: ${{ needs.resolve-release.outputs.build_profile }}
+      CMAKE_BUILD_TYPE: ${{ needs.resolve-release.outputs.cmake_build_type }}
+      STRIP_BINARY: ${{ needs.resolve-release.outputs.strip_binary }}
+      TARGET_PROCESSOR: ${{ matrix.processor }}
+      MACOSX_VERSION_MIN: "11.0"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Verify runner tools
+        run: packaging/scripts/verify-runner-tools ${{ matrix.verify_profile }}
+
+      - name: Build release binary
+        run: packaging/scripts/build-release ${{ matrix.platform }}
+
+      - name: Package binary
+        env:
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          ARTIFACT_SUFFIX: ${{ needs.resolve-release.outputs.artifact_suffix }}
+        run: cp build/release/aria2-next "aria2-next-${VERSION}${ARTIFACT_SUFFIX}-${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}${{ needs.resolve-release.outputs.artifact_suffix }}
+          path: aria2-next-${{ needs.resolve-release.outputs.version }}${{ needs.resolve-release.outputs.artifact_suffix }}-${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    name: ${{ matrix.name }}
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            architecture: x86_64
+            verify_profile: windows-x86_64
+            runtime_platform: windows-x86_64
+            artifact: windows-x86_64.exe
+          - name: Windows ARM64
+            architecture: aarch64
+            verify_profile: windows-arm64
+            runtime_platform: windows-arm64
+            artifact: windows-arm64.exe
+    env:
+      ARIA2_BUILD_PROFILE: ${{ needs.resolve-release.outputs.build_profile }}
+      CMAKE_BUILD_TYPE: ${{ needs.resolve-release.outputs.cmake_build_type }}
+      STRIP_BINARY: ${{ needs.resolve-release.outputs.strip_binary }}
+      TARGET_PROCESSOR: ${{ matrix.architecture }}
+      RUNTIME_PLATFORM: ${{ matrix.runtime_platform }}
+      WINDOWS_DEBUG_MAP_FLAGS: ${{ needs.resolve-release.outputs.windows_debug_map_flags }}
+      ARIA2_RELEASE_LTO: OFF
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Install LLVM-MinGW
+        run: |
+          . packaging/dependencies.env
+          . packaging/scripts/common.sh
+          curl_fetch "$LLVM_MINGW_URL" "$LLVM_MINGW_ARCHIVE" "$LLVM_MINGW_SHA256"
+          tar xf "$LLVM_MINGW_ARCHIVE"
+          echo "$PWD/llvm-mingw-$LLVM_MINGW_VERSION-ucrt-ubuntu-22.04-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Configure toolchain
+        run: |
+          prefix=${{ matrix.architecture }}-w64-mingw32
+          {
+            echo "CC=${prefix}-clang"
+            echo "CXX=${prefix}-clang++"
+            echo "RC=${prefix}-windres"
+            echo "AR=${prefix}-ar"
+            echo "RANLIB=${prefix}-ranlib"
+            echo "STRIP=${prefix}-strip"
+            echo "OBJDUMP=${prefix}-objdump"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify runner tools
+        run: packaging/scripts/verify-runner-tools ${{ matrix.verify_profile }}
+
+      - name: Build release binary
+        run: packaging/scripts/build-release windows
+
+      - name: Package binary
+        env:
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          ARTIFACT_SUFFIX: ${{ needs.resolve-release.outputs.artifact_suffix }}
+        run: cp build/release/aria2-next.exe "aria2-next-${VERSION}${ARTIFACT_SUFFIX}-${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.runtime_platform }}${{ needs.resolve-release.outputs.artifact_suffix }}
+          path: aria2-next-${{ needs.resolve-release.outputs.version }}${{ needs.resolve-release.outputs.artifact_suffix }}-${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 7
+
+  build-android-arm64:
+    name: Android ARM64
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    env:
+      API: "33"
+      ARIA2_BUILD_PROFILE: ${{ needs.resolve-release.outputs.build_profile }}
+      CMAKE_BUILD_TYPE: ${{ needs.resolve-release.outputs.cmake_build_type }}
+      STRIP_BINARY: ${{ needs.resolve-release.outputs.strip_binary }}
+      STRIP: llvm-strip
+      READELF: llvm-readelf
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Resolve Android NDK
+        run: |
+          . packaging/dependencies.env
+          NDK_HOME=${ANDROID_NDK_LATEST_HOME:-}
+          test -d "$NDK_HOME"
+          version_major=$(awk -F'= *' '/^Pkg\.Revision/ { split($2, parts, "."); print parts[1]; exit }' "$NDK_HOME/source.properties")
+          if [ "$version_major" != "$ANDROID_NDK_VERSION" ]; then
+            echo "Unexpected Android NDK major version: $version_major" >&2
+            exit 1
+          fi
+          echo "NDK=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Verify runner tools
+        run: packaging/scripts/verify-runner-tools android
+
+      - name: Build release binary
+        run: packaging/scripts/build-release android
+
+      - name: Package binary
+        env:
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          ARTIFACT_SUFFIX: ${{ needs.resolve-release.outputs.artifact_suffix }}
+        run: |
+          cp build/release/aria2-next "aria2-next-${VERSION}${ARTIFACT_SUFFIX}-android-arm64"
+          chmod 755 "aria2-next-${VERSION}${ARTIFACT_SUFFIX}-android-arm64"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-arm64${{ needs.resolve-release.outputs.artifact_suffix }}
+          path: aria2-next-${{ needs.resolve-release.outputs.version }}${{ needs.resolve-release.outputs.artifact_suffix }}-android-arm64
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-assets:
+    name: Publish or Archive
+    needs:
+      - resolve-release
+      - build-native
+      - build-windows
+      - build-android-arm64
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
+    env:
+      ARTIFACT_SUFFIX: ${{ needs.resolve-release.outputs.artifact_suffix }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum aria2-next-* > ../checksums.sha256
+          cd ..
+          mv checksums.sha256 "artifacts/aria2-next-${VERSION}${ARTIFACT_SUFFIX}-checksums.sha256"
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" artifacts/* --clobber
+
+      - name: Publish Docker images
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh workflow run docker-publish.yml --ref "$RELEASE_TAG" --field release_tag="$RELEASE_TAG"
+
+      - name: Archive validation assets
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aria2-next-${{ needs.resolve-release.outputs.version }}${{ needs.resolve-release.outputs.artifact_suffix }}-release-assets
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summary
+        run: |
+          {
+            echo "## Aria2 Next $VERSION"
+            echo
+            echo "Built and verified standalone binaries for Linux, macOS, Windows, and Android."
+            echo
+            echo "Release-triggered runs publish assets and dispatch Docker publishing. Manual runs archive validation assets only."
+          } >> "$GITHUB_STEP_SUMMARY"

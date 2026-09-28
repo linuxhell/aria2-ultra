@@ -33,6 +33,10 @@
  */
 /* copyright --> */
 #include "rpc_helper.h"
+#include "ValueBase.h"
+#include <cstddef>
+#include <memory>
+#include <utility>
 #include "XmlParser.h"
 #include "RpcRequest.h"
 #include "XmlRpcRequestParserStateMachine.h"
@@ -42,7 +46,7 @@
 #include "RpcMethod.h"
 #include "RpcResponse.h"
 #include "RpcMethodFactory.h"
-#include "LogFactory.h"
+#include "Log.h"
 #include "fmt.h"
 
 namespace aria2 {
@@ -100,7 +104,7 @@ RpcResponse processJsonRpcRequest(Dict* jsondict, DownloadEngine* e)
     // TODO No support for Named params
     return createJsonRpcErrorResponse(-32602, "Invalid params.", std::move(id));
   }
-  A2_LOG_INFO(fmt("Executing RPC method %s", methodName->s().c_str()));
+  A2_LOG_TRACE(fmt("Executing RPC method %s", methodName->s().c_str()));
   RpcRequest req = {methodName->s(), std::move(params), std::move(id), true};
   return getMethod(methodName->s())->execute(std::move(req), e);
 }

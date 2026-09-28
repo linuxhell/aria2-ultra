@@ -33,13 +33,19 @@
  */
 /* copyright --> */
 #include "AbstractSingleDiskAdaptor.h"
+#include "a2functional.h"
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
 #include "File.h"
 #include "AdaptiveFileAllocationIterator.h"
 #include "DiskWriter.h"
 #include "FileEntry.h"
 #include "TruncFileAllocationIterator.h"
 #include "WrDiskCacheEntry.h"
-#include "LogFactory.h"
+#include "Log.h"
 #ifdef HAVE_SOME_FALLOCATE
 #  include "FallocFileAllocationIterator.h"
 #endif // HAVE_SOME_FALLOCATE
@@ -56,11 +62,17 @@ AbstractSingleDiskAdaptor::~AbstractSingleDiskAdaptor() = default;
 void AbstractSingleDiskAdaptor::initAndOpenFile()
 {
   diskWriter_->initAndOpenFile(totalLength_);
+  if (getFileAllocationMethod() == DiskAdaptor::FILE_ALLOC_NONE) {
+    diskWriter_->enableSparse();
+  }
 }
 
 void AbstractSingleDiskAdaptor::openFile()
 {
   diskWriter_->openFile(totalLength_);
+  if (getFileAllocationMethod() == DiskAdaptor::FILE_ALLOC_NONE) {
+    diskWriter_->enableSparse();
+  }
 }
 
 void AbstractSingleDiskAdaptor::closeFile() { diskWriter_->closeFile(); }
@@ -96,11 +108,27 @@ ssize_t AbstractSingleDiskAdaptor::readDataDropCache(unsigned char* data,
 
 void AbstractSingleDiskAdaptor::writeCache(const WrDiskCacheEntry* entry)
 {
+  std::string buffer;
+  int64_t offset = 0;
+  auto flush = [&]() {
+    if (!buffer.empty()) {
+      writeData(reinterpret_cast<const unsigned char*>(buffer.data()),
+                buffer.size(), offset);
+      buffer.clear();
+    }
+  };
+
   for (auto& d : entry->getDataSet()) {
-    A2_LOG_DEBUG(fmt("Cache flush goff=%" PRId64 ", len=%lu", d->goff,
-                     static_cast<unsigned long>(d->len)));
-    writeData(d->data + d->offset, d->len, d->goff);
+    if (buffer.empty()) {
+      offset = d->goff;
+    }
+    else if (offset + static_cast<int64_t>(buffer.size()) != d->goff) {
+      flush();
+      offset = d->goff;
+    }
+    buffer.append(reinterpret_cast<const char*>(d->data + d->offset), d->len);
   }
+  flush();
 }
 
 void AbstractSingleDiskAdaptor::flushOSBuffers()
@@ -124,6 +152,14 @@ std::unique_ptr<FileAllocationIterator>
 AbstractSingleDiskAdaptor::fileAllocationIterator()
 {
   switch (getFileAllocationMethod()) {
+  case (DiskAdaptor::FILE_ALLOC_ADAPTIVE):
+#ifdef HAVE_SOME_FALLOCATE
+    return make_unique<FallocFileAllocationIterator>(diskWriter_.get(), size(),
+                                                     totalLength_);
+#else  // !HAVE_SOME_FALLOCATE
+    return make_unique<AdaptiveFileAllocationIterator>(diskWriter_.get(),
+                                                       size(), totalLength_);
+#endif // !HAVE_SOME_FALLOCATE
 #ifdef HAVE_SOME_FALLOCATE
   case (DiskAdaptor::FILE_ALLOC_FALLOC):
     return make_unique<FallocFileAllocationIterator>(diskWriter_.get(), size(),
@@ -132,6 +168,9 @@ AbstractSingleDiskAdaptor::fileAllocationIterator()
   case (DiskAdaptor::FILE_ALLOC_TRUNC):
     return make_unique<TruncFileAllocationIterator>(diskWriter_.get(), size(),
                                                     totalLength_);
+  case (DiskAdaptor::FILE_ALLOC_NONE):
+    return make_unique<TruncFileAllocationIterator>(diskWriter_.get(), size(),
+                                                    size());
   default:
     return make_unique<AdaptiveFileAllocationIterator>(diskWriter_.get(),
                                                        size(), totalLength_);

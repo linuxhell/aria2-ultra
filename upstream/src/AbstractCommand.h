@@ -57,10 +57,6 @@ class Segment;
 class SocketCore;
 class Option;
 class SocketRecvBuffer;
-#ifdef ENABLE_ASYNC_DNS
-class AsyncNameResolver;
-class AsyncNameResolverMan;
-#endif // ENABLE_ASYNC_DNS
 
 class AbstractCommand : public Command {
 private:
@@ -70,10 +66,6 @@ private:
   std::shared_ptr<SocketRecvBuffer> socketRecvBuffer_;
   std::shared_ptr<SocketCore> readCheckTarget_;
   std::shared_ptr<SocketCore> writeCheckTarget_;
-
-#ifdef ENABLE_ASYNC_DNS
-  std::unique_ptr<AsyncNameResolverMan> asyncNameResolverMan_;
-#endif // ENABLE_ASYNC_DNS
 
   RequestGroup* requestGroup_;
   DownloadEngine* e_;
@@ -88,12 +80,14 @@ private:
   bool checkSocketIsWritable_;
 
   bool incNumConnection_;
+  bool incNumStreamCommand_;
 
   int32_t calculateMinSplitSize() const;
 
-  void useFasterRequest(const std::shared_ptr<Request>& fasterRequest);
-
   bool shouldProcess() const;
+
+protected:
+  void changeRequestGroup(RequestGroup* requestGroup);
 
 public:
   RequestGroup* getRequestGroup() const { return requestGroup_; }
@@ -130,14 +124,6 @@ public:
     return segments_;
   }
 
-  // Resolves hostname.  The resolved addresses are stored in addrs
-  // and first element is returned.  If resolve is not finished,
-  // return empty string. In this case, call this function with same
-  // arguments until resolved address is returned.  Exception is
-  // thrown on error. port is used for retrieving cached addresses.
-  std::string resolveHostname(std::vector<std::string>& addrs,
-                              const std::string& hostname, uint16_t port);
-
   void tryReserved();
 
   void setReadCheckSocket(const std::shared_ptr<SocketCore>& socket);
@@ -172,8 +158,6 @@ public:
     timeout_ = std::move(timeout);
   }
 
-  void prepareForNextAction(std::unique_ptr<CheckIntegrityEntry> checkEntry);
-
   // Check if socket is connected. If socket is not connected and
   // there are other addresses to try, command is created using
   // InitiateConnectionCommandFactory and it is pushed to
@@ -183,22 +167,6 @@ public:
                                     const std::string& connectedHostname,
                                     const std::string& connectedAddr,
                                     uint16_t connectedPort);
-
-  /*
-   * Returns true if proxy for the procol indicated by Request::getProtocol()
-   * is defined. Otherwise, returns false.
-   */
-  bool isProxyDefined() const;
-
-  /*
-   * Creates Request object for proxy URI and returns it.
-   * If no valid proxy is defined, then returns std::shared_ptr<Request>().
-   */
-  std::shared_ptr<Request> createProxyRequest() const;
-
-  // Returns proxy method for given protocol. Either V_GET or V_TUNNEL
-  // is returned.  For HTTPS, always returns V_TUNNEL.
-  const std::string& resolveProxyMethod(const std::string& protocol) const;
 
   const std::shared_ptr<Option>& getOption() const;
 
@@ -229,16 +197,12 @@ public:
       const std::shared_ptr<FileEntry>& fileEntry, RequestGroup* requestGroup,
       DownloadEngine* e, const std::shared_ptr<SocketCore>& s = nullptr,
       const std::shared_ptr<SocketRecvBuffer>& socketRecvBuffer = nullptr,
-      bool incNumConnection = true);
+      bool incNumConnection = true, bool incNumStreamCommand = true);
 
   virtual ~AbstractCommand();
 
-  virtual bool execute() CXX11_OVERRIDE;
+  virtual bool execute() override;
 };
-
-// Returns proxy URI for given protocol.  If no proxy URI is defined,
-// then returns an empty string.
-std::string getProxyUri(const std::string& protocol, const Option* option);
 
 } // namespace aria2
 

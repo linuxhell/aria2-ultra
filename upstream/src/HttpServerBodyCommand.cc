@@ -33,12 +33,20 @@
  */
 /* copyright --> */
 #include "HttpServerBodyCommand.h"
+#include "Command.h"
+#include "ValueBase.h"
+#include <algorithm>
+#include <cinttypes>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #include "SocketCore.h"
 #include "DownloadEngine.h"
 #include "HttpServer.h"
 #include "HttpHeader.h"
-#include "Logger.h"
-#include "LogFactory.h"
+#include "Log.h"
 #include "RequestGroup.h"
 #include "RequestGroupMan.h"
 #include "RecoverableException.h"
@@ -47,7 +55,7 @@
 #include "OptionParser.h"
 #include "OptionHandler.h"
 #include "wallclock.h"
-#include "util.h"
+#include "a2functional.h"
 #include "fmt.h"
 #include "SocketRecvBuffer.h"
 #include "json.h"
@@ -127,7 +135,7 @@ void HttpServerBodyCommand::sendJsonRpcResponse(const rpc::RpcResponse& res,
     default:
       httpCode = 500;
     };
-    httpServer_->feedResponse(httpCode, A2STR::NIL, std::move(responseData),
+    httpServer_->feedResponse(httpCode, "", std::move(responseData),
                               getJsonRpcContentType(!callback.empty()));
   }
   addHttpServerResponseCommand(notauthorized);
@@ -231,14 +239,14 @@ bool HttpServerBodyCommand::execute()
           }
           dw->reset();
           if (error < 0) {
-            A2_LOG_INFO(fmt("CUID#%" PRId64
-                            " - Failed to parse XML-RPC request",
-                            getCuid()));
+            A2_LOG_DEBUG(fmt("CUID#%" PRId64
+                             " - Failed to parse XML-RPC request",
+                             getCuid()));
             httpServer_->feedResponse(400);
             addHttpServerResponseCommand(false);
             return true;
           }
-          A2_LOG_INFO(fmt("Executing RPC method %s", req.methodName.c_str()));
+          A2_LOG_TRACE(fmt("Executing RPC method %s", req.methodName.c_str()));
           auto method = rpc::getMethod(req.methodName);
           auto res = method->execute(std::move(req), e_);
           bool gzip = httpServer_->supportsGZip();
@@ -273,9 +281,9 @@ bool HttpServerBodyCommand::execute()
             dw->reset();
           }
           if (error < 0) {
-            A2_LOG_INFO(fmt("CUID#%" PRId64
-                            " - Failed to parse JSON-RPC request",
-                            getCuid()));
+            A2_LOG_DEBUG(fmt("CUID#%" PRId64
+                             " - Failed to parse JSON-RPC request",
+                             getCuid()));
             rpc::RpcResponse res(rpc::createJsonRpcErrorResponse(
                 -32700, "Parse error.", Null::g()));
             sendJsonRpcResponse(res, callback);
@@ -324,7 +332,7 @@ bool HttpServerBodyCommand::execute()
     }
     else {
       if (timeoutTimer_.difference(global::wallclock()) >= 30_s) {
-        A2_LOG_INFO("HTTP request body timeout.");
+        A2_LOG_DEBUG("HTTP request body timeout.");
         return true;
       }
       else {
@@ -334,10 +342,10 @@ bool HttpServerBodyCommand::execute()
     }
   }
   catch (RecoverableException& e) {
-    A2_LOG_INFO_EX(fmt("CUID#%" PRId64
-                       " - Error occurred while reading HTTP request body",
-                       getCuid()),
-                   e);
+    A2_LOG_DEBUG_EX(fmt("CUID#%" PRId64
+                        " - Error occurred while reading HTTP request body",
+                        getCuid()),
+                    e);
     return true;
   }
 }

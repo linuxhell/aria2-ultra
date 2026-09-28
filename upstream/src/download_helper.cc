@@ -33,11 +33,22 @@
  */
 /* copyright --> */
 #include "download_helper.h"
+#include "ContextAttribute.h"
+#include "Ed2kKadState.h"
+#include "GroupId.h"
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <algorithm>
 #include <sstream>
 
 #include "RequestGroup.h"
+#include "CurlDownload.h"
+#include "media/MediaDownload.h"
 #include "Option.h"
 #include "prefs.h"
 #include "Metalink2RequestGroup.h"
@@ -45,60 +56,57 @@
 #include "paramed_string.h"
 #include "UriListParser.h"
 #include "DownloadContext.h"
+#include "Ed2kAttribute.h"
 #include "RecoverableException.h"
 #include "DlAbortEx.h"
 #include "message.h"
 #include "fmt.h"
 #include "FileEntry.h"
-#include "LogFactory.h"
+#include "Log.h"
 #include "File.h"
-#include "util.h"
+#include "support/Text.h"
+#include "support/Numbers.h"
+#include "support/Encoding.h"
+#include "support/FilePath.h"
+#include "a2functional.h"
+#include "a2iterator.h"
 #include "array_fun.h"
 #include "OptionHandler.h"
 #include "ByteArrayDiskWriter.h"
-#include "a2functional.h"
 #include "ByteArrayDiskWriterFactory.h"
+#include "BufferedFile.h"
 #include "MetadataInfo.h"
 #include "OptionParser.h"
 #include "SegList.h"
 #include "download_handlers.h"
+#include "ed2k_hash.h"
+#include "ed2k_kad.h"
+#include "ed2k_link.h"
+#include "ed2k_search.h"
+#include "ed2k_server.h"
 #include "SimpleRandomizer.h"
+#include "base64.h"
 #ifdef ENABLE_BITTORRENT
-#  include "bittorrent_helper.h"
-#  include "BtConstants.h"
-#  include "ValueBaseBencodeParser.h"
+#  include "BtDownload.h"
 #endif // ENABLE_BITTORRENT
 
 namespace aria2 {
 
 namespace {
+constexpr char DEFAULT_ED2K_SERVER_LIST[] =
+    "45.82.80.155:5687,176.123.5.89:4725,85.121.5.137:4232,"
+    "176.123.2.239:4232,145.239.2.134:4661,91.208.162.87:4232,"
+    "37.15.61.236:4232";
+constexpr char DEFAULT_ED2K_NODE_LIST_PATH[] = "${HOME}/.aMule/nodes.dat";
+constexpr char DEFAULT_ED2K_MAC_NODE_LIST_PATH[] =
+    "${HOME}/Library/Application Support/aMule/nodes.dat";
+
 void unfoldURI(std::vector<std::string>& result,
                const std::vector<std::string>& args)
 {
   for (const auto& i : args) {
     paramed_string::expand(std::begin(i), std::end(i),
                            std::back_inserter(result));
-  }
-}
-} // namespace
-
-namespace {
-template <typename InputIterator>
-void splitURI(std::vector<std::string>& result, InputIterator begin,
-              InputIterator end, size_t numSplit, size_t maxIter)
-{
-  size_t numURIs = std::distance(begin, end);
-  if (numURIs >= numSplit) {
-    result.insert(std::end(result), begin, end);
-  }
-  else if (numURIs > 0) {
-    size_t num = std::min(numSplit / numURIs, maxIter);
-    for (size_t i = 0; i < num; ++i) {
-      result.insert(std::end(result), begin, end);
-    }
-    if (num < maxIter) {
-      result.insert(std::end(result), begin, begin + (numSplit % numURIs));
-    }
   }
 }
 } // namespace
@@ -127,21 +135,254 @@ std::shared_ptr<GroupId> getGID(const std::shared_ptr<Option>& option)
 } // namespace
 
 namespace {
+void addUniqueEndpoint(std::vector<ed2k::Endpoint>& endpoints,
+                       const ed2k::Endpoint& endpoint)
+{
+  if (endpoint.host.empty() || endpoint.port == 0) {
+    return;
+  }
+  auto i = std::find_if(
+      endpoints.begin(), endpoints.end(), [&](const ed2k::Endpoint& item) {
+        return item.host == endpoint.host && item.port == endpoint.port;
+      });
+  if (i == endpoints.end()) {
+    endpoints.push_back(endpoint);
+  }
+}
+
+void addEndpointList(std::vector<ed2k::Endpoint>& endpoints,
+                     const std::string& value)
+{
+  std::vector<Scip> entries;
+  util::splitIter(value.begin(), value.end(), std::back_inserter(entries), ',');
+  for (const auto& entry : entries) {
+    addUniqueEndpoint(
+        endpoints, ed2k::parseEndpoint(std::string(entry.first, entry.second)));
+  }
+}
+
+std::string readLocalFile(const std::string& path)
+{
+  BufferedFile fp(path.c_str(), BufferedFile::READ);
+  if (!fp) {
+    throw DL_ABORT_EX(fmt("Cannot open ED2K metadata file: %s", path.c_str()));
+  }
+  std::ostringstream out;
+  fp.transfer(out);
+  return out.str();
+}
+
+void mergeServerMetFile(std::vector<ed2k::Endpoint>& endpoints,
+                        std::vector<ed2k::ServerState>& states,
+                        const std::string& path)
+{
+  for (const auto& entry : ed2k::parseServerMetEntries(readLocalFile(path))) {
+    addUniqueEndpoint(endpoints, entry.endpoint);
+    auto i = std::find_if(states.begin(), states.end(),
+                          [&](const ed2k::ServerState& state) {
+                            return state.endpoint.host == entry.endpoint.host &&
+                                   state.endpoint.port == entry.endpoint.port;
+                          });
+    if (i == states.end()) {
+      ed2k::ServerState state;
+      state.endpoint = entry.endpoint;
+      state.name = entry.name;
+      state.description = entry.description;
+      state.users = entry.users;
+      state.files = entry.files;
+      state.maxUsers = entry.maxUsers;
+      state.softFiles = entry.softFiles;
+      state.hardFiles = entry.hardFiles;
+      state.udpFlags = entry.udpFlags;
+      state.lowIdUsers = entry.lowIdUsers;
+      state.udpObfuscationPort = entry.udpObfuscationPort;
+      state.tcpObfuscationPort = entry.tcpObfuscationPort;
+      state.udpKey = entry.udpKey;
+      states.push_back(state);
+      continue;
+    }
+    if (!entry.name.empty()) {
+      i->name = entry.name;
+    }
+    if (!entry.description.empty()) {
+      i->description = entry.description;
+    }
+    if (entry.users) {
+      i->users = entry.users;
+    }
+    if (entry.files) {
+      i->files = entry.files;
+    }
+    if (entry.maxUsers) {
+      i->maxUsers = entry.maxUsers;
+    }
+    if (entry.softFiles) {
+      i->softFiles = entry.softFiles;
+    }
+    if (entry.hardFiles) {
+      i->hardFiles = entry.hardFiles;
+    }
+    if (entry.udpFlags) {
+      i->udpFlags = entry.udpFlags;
+    }
+    if (entry.lowIdUsers) {
+      i->lowIdUsers = entry.lowIdUsers;
+    }
+    if (entry.udpObfuscationPort) {
+      i->udpObfuscationPort = entry.udpObfuscationPort;
+    }
+    if (entry.tcpObfuscationPort) {
+      i->tcpObfuscationPort = entry.tcpObfuscationPort;
+    }
+    if (entry.udpKey) {
+      i->udpKey = entry.udpKey;
+    }
+  }
+}
+
+void addOptionEd2kServers(std::vector<ed2k::Endpoint>& endpoints,
+                          std::vector<ed2k::ServerState>& states,
+                          const std::shared_ptr<Option>& option)
+{
+  if (!option->blank(PREF_ED2K_SERVER)) {
+    addEndpointList(endpoints, option->get(PREF_ED2K_SERVER));
+  }
+  if (!option->blank(PREF_ED2K_SERVER_LIST)) {
+    mergeServerMetFile(endpoints, states, option->get(PREF_ED2K_SERVER_LIST));
+  }
+}
+
+void addDefaultEd2kServersIfNeeded(std::vector<ed2k::Endpoint>& endpoints,
+                                   const ed2k::Link& link,
+                                   const std::shared_ptr<Option>& option)
+{
+  if (!endpoints.empty() || !link.sources.empty()) {
+    return;
+  }
+  addEndpointList(endpoints, DEFAULT_ED2K_SERVER_LIST);
+}
+
+std::string defaultEd2kNodeListPath()
+{
+  return util::replace(DEFAULT_ED2K_NODE_LIST_PATH, "${HOME}",
+                       util::getHomeDir());
+}
+
+std::string defaultEd2kMacNodeListPath()
+{
+  return util::replace(DEFAULT_ED2K_MAC_NODE_LIST_PATH, "${HOME}",
+                       util::getHomeDir());
+}
+
+std::shared_ptr<ed2k::KadRoutingTable>
+createEd2kKadRoutingTableFromNodesDat(const std::string& path,
+                                      const std::string& selfId, bool required)
+{
+  if (!required && !File(path).isFile()) {
+    return nullptr;
+  }
+  ed2k::NodesDat nodes;
+  if (!ed2k::parseNodesDat(nodes, readLocalFile(path))) {
+    if (required) {
+      throw DL_ABORT_EX(fmt("Cannot parse ED2K node list: %s", path.c_str()));
+    }
+    return nullptr;
+  }
+  auto table =
+      std::make_shared<ed2k::KadRoutingTable>(ed2k::ed2kHashToKadId(selfId));
+  for (const auto& contact : nodes.contacts) {
+    table->addRouterNode(contact);
+  }
+  return table;
+}
+
+std::shared_ptr<ed2k::KadRoutingTable>
+createEd2kKadRoutingTable(const std::shared_ptr<Option>& option,
+                          const std::string& selfId, bool createEmpty = false)
+{
+  if (!option->blank(PREF_ED2K_NODE_LIST)) {
+    return createEd2kKadRoutingTableFromNodesDat(
+        option->get(PREF_ED2K_NODE_LIST), selfId, true);
+  }
+  auto table = createEd2kKadRoutingTableFromNodesDat(defaultEd2kNodeListPath(),
+                                                     selfId, false);
+  if (table) {
+    return table;
+  }
+  table = createEd2kKadRoutingTableFromNodesDat(defaultEd2kMacNodeListPath(),
+                                                selfId, false);
+  if (table) {
+    return table;
+  }
+  if (createEmpty) {
+    return std::make_shared<ed2k::KadRoutingTable>(
+        ed2k::ed2kHashToKadId(selfId));
+  }
+  return nullptr;
+}
+} // namespace
+
+namespace {
+std::shared_ptr<RequestGroup>
+createEd2kRequestGroup(const std::string& ed2kUri,
+                       const std::shared_ptr<Option>& optionTemplate)
+{
+  auto link = ed2k::parseLink(ed2kUri);
+  if (link.type != ed2k::LinkType::FILE) {
+    throw DL_ABORT_EX("Only ED2K file links can create downloads.");
+  }
+
+  auto option = std::make_shared<Option>(*optionTemplate);
+  auto gid = getGID(option);
+  auto rg = std::make_shared<RequestGroup>(gid, option);
+  const auto outputName = option->blank(PREF_OUT)
+                              ? util::fixTaintedBasename(link.name)
+                              : option->get(PREF_OUT);
+  auto dctx = std::make_shared<DownloadContext>(
+      ed2k::PIECE_LENGTH, link.size,
+      util::applyDir(option->get(PREF_DIR), outputName));
+  auto attrs = std::make_shared<Ed2kAttribute>();
+  attrs->link = std::move(link);
+  attrs->clientHash = createEd2kClientHash();
+  addOptionEd2kServers(attrs->servers, attrs->serverStates, option);
+  addDefaultEd2kServersIfNeeded(attrs->servers, attrs->link, option);
+  attrs->kadRoutingTable =
+      createEd2kKadRoutingTable(option, attrs->clientHash, true);
+  dctx->setAttribute(CTX_ATTR_ED2K, std::move(attrs));
+  dctx->setAcceptMetalink(false);
+  rg->setDownloadContext(dctx);
+  rg->setNumConcurrentCommand(option->getAsInt(PREF_ED2K_MAX_CONNECTIONS));
+
+  if (option->getAsBool(PREF_ENABLE_RPC)) {
+    rg->setPauseRequested(option->getAsBool(PREF_PAUSE));
+  }
+
+  removeOneshotOption(option);
+  return rg;
+}
+} // namespace
+
+std::shared_ptr<RequestGroup>
+createEd2kFileRequestGroup(const std::string& ed2kUri,
+                           const std::shared_ptr<Option>& optionTemplate)
+{
+  return createEd2kRequestGroup(ed2kUri, optionTemplate);
+}
+
+namespace {
 std::shared_ptr<RequestGroup>
 createRequestGroup(const std::shared_ptr<Option>& optionTemplate,
                    const std::vector<std::string>& uris,
                    bool useOutOption = false)
 {
-  auto option = util::copy(optionTemplate);
+  auto option = std::make_shared<Option>(*optionTemplate);
   auto rg = std::make_shared<RequestGroup>(getGID(option), option);
   auto dctx = std::make_shared<DownloadContext>(
       option->getAsInt(PREF_PIECE_LENGTH), 0,
       useOutOption && !option->blank(PREF_OUT)
           ? util::applyDir(option->get(PREF_DIR), option->get(PREF_OUT))
-          : A2STR::NIL);
+          : "");
   dctx->getFirstFileEntry()->setUris(uris);
-  dctx->getFirstFileEntry()->setMaxConnectionPerServer(
-      option->getAsInt(PREF_MAX_CONNECTION_PER_SERVER));
   const std::string& checksum = option->get(PREF_CHECKSUM);
   if (!checksum.empty()) {
     auto p = util::divide(std::begin(checksum), std::end(checksum), '=');
@@ -152,6 +393,12 @@ createRequestGroup(const std::shared_ptr<Option>& optionTemplate,
                     util::fromHex(std::begin(hexDigest), std::end(hexDigest)));
   }
   rg->setDownloadContext(dctx);
+  if (!uris.empty() && media::Download::handles(uris.front(), option.get())) {
+    rg->setMediaDownload(std::make_shared<media::Download>(uris.front()));
+  }
+  else {
+    rg->setCurlDownload(std::make_shared<CurlDownload>(uris));
+  }
 
   if (option->getAsBool(PREF_ENABLE_RPC)) {
     rg->setPauseRequested(option->getAsBool(PREF_PAUSE));
@@ -161,6 +408,48 @@ createRequestGroup(const std::shared_ptr<Option>& optionTemplate,
   return rg;
 }
 } // namespace
+
+std::shared_ptr<RequestGroup>
+createEd2kSearchRequestGroup(const ed2k::SearchQuery& query,
+                             const std::shared_ptr<Option>& optionTemplate)
+{
+  auto option = std::make_shared<Option>(*optionTemplate);
+  auto gid = getGID(option);
+  auto rg = std::make_shared<RequestGroup>(gid, option);
+  auto dctx = std::make_shared<DownloadContext>(
+      ed2k::PIECE_LENGTH, 0,
+      util::applyDir(option->get(PREF_DIR),
+                     "aria2-next-ed2k-search-" + gid->toHex()));
+  auto attrs = std::make_shared<Ed2kAttribute>();
+  attrs->searchActive = true;
+  attrs->searchQuery = query;
+  attrs->link.type = ed2k::LinkType::FILE;
+  attrs->link.name = query.keyword;
+  attrs->link.size = 0;
+  attrs->clientHash = createEd2kClientHash();
+  addOptionEd2kServers(attrs->servers, attrs->serverStates, option);
+  addDefaultEd2kServersIfNeeded(attrs->servers, attrs->link, option);
+  if (!option->blank(PREF_ED2K_NODE_LIST)) {
+    attrs->kadRoutingTable =
+        createEd2kKadRoutingTable(option, attrs->clientHash);
+  }
+  if (attrs->servers.empty()) {
+    if (!attrs->kadRoutingTable ||
+        attrs->kadRoutingTable->getRouterNodes().empty()) {
+      throw DL_ABORT_EX(
+          "ED2K search requires at least one server or Kad node.");
+    }
+  }
+  dctx->setAttribute(CTX_ATTR_ED2K, std::move(attrs));
+  dctx->setAcceptMetalink(false);
+  rg->setDownloadContext(dctx);
+  rg->setNumConcurrentCommand(option->getAsInt(PREF_ED2K_MAX_CONNECTIONS));
+  if (option->getAsBool(PREF_ENABLE_RPC)) {
+    rg->setPauseRequested(option->getAsBool(PREF_PAUSE));
+  }
+  removeOneshotOption(option);
+  return rg;
+}
 
 #if defined(ENABLE_BITTORRENT) || defined(ENABLE_METALINK)
 namespace {
@@ -183,167 +472,69 @@ std::shared_ptr<MetadataInfo> createMetadataInfoDataOnly()
 
 namespace {
 std::shared_ptr<RequestGroup>
-createBtRequestGroup(const std::string& metaInfoUri,
-                     const std::shared_ptr<Option>& optionTemplate,
-                     const std::vector<std::string>& auxUris,
-                     const ValueBase* torrent, bool adjustAnnounceUri = true)
+createBtRequestGroup(std::shared_ptr<BtDownload> download,
+                     const std::string& source,
+                     const std::shared_ptr<Option>& optionTemplate)
 {
-  auto option = util::copy(optionTemplate);
+  auto option = std::make_shared<Option>(*optionTemplate);
   auto gid = getGID(option);
-  auto rg = std::make_shared<RequestGroup>(gid, option);
-  auto dctx = std::make_shared<DownloadContext>();
-  // may throw exception
-  bittorrent::loadFromMemory(torrent, dctx, option, auxUris,
-                             metaInfoUri.empty() ? "default" : metaInfoUri);
-  for (auto& fe : dctx->getFileEntries()) {
-    auto& uris = fe->getRemainingUris();
-    std::shuffle(std::begin(uris), std::end(uris),
-                 *SimpleRandomizer::getInstance());
-  }
-  if (metaInfoUri.empty()) {
-    rg->setMetadataInfo(createMetadataInfoDataOnly());
-  }
-  else {
-    rg->setMetadataInfo(createMetadataInfo(gid, metaInfoUri));
-  }
-  if (adjustAnnounceUri) {
-    bittorrent::adjustAnnounceUri(bittorrent::getTorrentAttrs(dctx), option);
-  }
-  auto sgl = util::parseIntSegments(option->get(PREF_SELECT_FILE));
-  sgl.normalize();
-  dctx->setFileFilter(std::move(sgl));
-  std::istringstream indexOutIn(option->get(PREF_INDEX_OUT));
-  auto indexPaths = util::createIndexPaths(indexOutIn);
-  for (const auto& i : indexPaths) {
-    dctx->setFilePathWithIndex(i.first,
-                               util::applyDir(option->get(PREF_DIR), i.second));
-  }
-  rg->setDownloadContext(dctx);
+  auto group = std::make_shared<RequestGroup>(gid, option);
+  auto context = std::make_shared<DownloadContext>(16_k, 0);
+  download->configure(option.get());
+  download->populateDownloadContext(context, option.get());
 
+  auto selected = util::parseIntSegments(option->get(PREF_SELECT_FILE));
+  selected.normalize();
+  context->setFileFilter(std::move(selected));
+
+  download->updateFilePaths(context, option.get());
+  download->updateSelection(context);
+
+  group->setDownloadContext(context);
+  group->setBtDownload(download);
+  group->setNumConcurrentCommand(1);
+  group->setFileAllocationEnabled(false);
+  group->setPreLocalFileCheckEnabled(false);
+  group->clearPostDownloadHandler();
+  group->setMetadataInfo(source.empty() ? createMetadataInfoDataOnly()
+                                        : createMetadataInfo(gid, source));
   if (option->getAsBool(PREF_ENABLE_RPC)) {
-    rg->setPauseRequested(option->getAsBool(PREF_PAUSE));
+    group->setPauseRequested(option->getAsBool(PREF_PAUSE));
   }
-
-  // Remove "metalink" from Accept Type list to avoid server from
-  // responding Metalink file for web-seeding URIs.
-  dctx->setAcceptMetalink(false);
+  download->initialize(group.get());
   removeOneshotOption(option);
-  return rg;
+  return group;
 }
 } // namespace
 
 namespace {
 std::shared_ptr<RequestGroup>
 createBtMagnetRequestGroup(const std::string& magnetLink,
-                           const std::shared_ptr<Option>& optionTemplate)
+                           const std::shared_ptr<Option>& option)
 {
-  auto dctx = std::make_shared<DownloadContext>(METADATA_PIECE_SIZE, 0);
-
-  // We only know info hash. Total Length is unknown at this moment.
-  dctx->markTotalLengthIsUnknown();
-
-  bittorrent::loadMagnet(magnetLink, dctx);
-  auto torrentAttrs = bittorrent::getTorrentAttrs(dctx);
-
-  if (optionTemplate->getAsBool(PREF_BT_LOAD_SAVED_METADATA)) {
-    // Try to read .torrent file saved by aria2 (see
-    // UTMetadataPostDownloadHandler and --bt-save-metadata option).
-    auto torrentFilename =
-        util::applyDir(optionTemplate->get(PREF_DIR),
-                       util::toHex(torrentAttrs->infoHash) + ".torrent");
-
-    bittorrent::ValueBaseBencodeParser parser;
-    auto torrent = parseFile(parser, torrentFilename);
-    if (torrent) {
-      auto rg = createBtRequestGroup(torrentFilename, optionTemplate, {},
-                                     torrent.get());
-      const auto& actualInfoHash =
-          bittorrent::getTorrentAttrs(rg->getDownloadContext())->infoHash;
-
-      if (torrentAttrs->infoHash == actualInfoHash) {
-        A2_LOG_NOTICE(fmt("BitTorrent metadata was loaded from %s",
-                          torrentFilename.c_str()));
-        rg->setMetadataInfo(createMetadataInfo(rg->getGroupId(), magnetLink));
-        return rg;
-      }
-
-      A2_LOG_WARN(
-          fmt("BitTorrent metadata loaded from %s has unexpected infohash %s\n",
-              torrentFilename.c_str(), util::toHex(actualInfoHash).c_str()));
-    }
-  }
-
-  auto option = util::copy(optionTemplate);
-  bittorrent::adjustAnnounceUri(torrentAttrs, option);
-  // torrentAttrs->name may contain "/", but we use basename of
-  // FileEntry::getPath() to print out in-memory download entry.
-  // Since "/" is treated as separator, we replace it with "-".
-  dctx->getFirstFileEntry()->setPath(
-      util::replace(torrentAttrs->name, "/", "-"));
-
-  auto gid = getGID(option);
-  auto rg = std::make_shared<RequestGroup>(gid, option);
-  rg->setFileAllocationEnabled(false);
-  rg->setPreLocalFileCheckEnabled(false);
-  rg->setDownloadContext(dctx);
-  rg->clearPostDownloadHandler();
-  rg->addPostDownloadHandler(
-      download_handlers::getUTMetadataPostDownloadHandler());
-  rg->setDiskWriterFactory(std::make_shared<ByteArrayDiskWriterFactory>());
-  rg->setMetadataInfo(createMetadataInfo(gid, magnetLink));
-  rg->markInMemoryDownload();
-
-  if (option->getAsBool(PREF_ENABLE_RPC)) {
-    rg->setPauseRequested(option->getAsBool(PREF_PAUSE));
-  }
-
-  removeOneshotOption(option);
-  return rg;
+  return createBtRequestGroup(BtDownload::fromMagnet(magnetLink), magnetLink,
+                              option);
 }
 } // namespace
 
 void createRequestGroupForBitTorrent(
     std::vector<std::shared_ptr<RequestGroup>>& result,
     const std::shared_ptr<Option>& option, const std::vector<std::string>& uris,
-    const std::string& metaInfoUri, const std::string& torrentData,
-    bool adjustAnnounceUri)
+    const std::string& metaInfoUri, const std::string& torrentData)
 {
-  std::unique_ptr<ValueBase> torrent;
-  bittorrent::ValueBaseBencodeParser parser;
-  if (torrentData.empty()) {
-    torrent = parseFile(parser, metaInfoUri);
-  }
-  else {
-    ssize_t error;
-    torrent = parser.parseFinal(torrentData.c_str(), torrentData.size(), error);
-  }
-  if (!torrent) {
-    throw DL_ABORT_EX2("Bencode decoding failed",
-                       error_code::BENCODE_PARSE_ERROR);
-  }
-  createRequestGroupForBitTorrent(result, option, uris, metaInfoUri,
-                                  torrent.get(), adjustAnnounceUri);
+  auto download = torrentData.empty()
+                      ? BtDownload::fromFile(metaInfoUri, uris)
+                      : BtDownload::fromBuffer(torrentData, uris);
+  auto group = createBtRequestGroup(std::move(download), metaInfoUri, option);
+  result.push_back(std::move(group));
 }
 
 void createRequestGroupForBitTorrent(
     std::vector<std::shared_ptr<RequestGroup>>& result,
-    const std::shared_ptr<Option>& option, const std::vector<std::string>& uris,
-    const std::string& metaInfoUri, const ValueBase* torrent,
-    bool adjustAnnounceUri)
+    const std::shared_ptr<Option>& option,
+    const std::shared_ptr<BtDownload>& download, const std::string& metaInfoUri)
 {
-  std::vector<std::string> nargs;
-  if (option->get(PREF_PARAMETERIZED_URI) == A2_V_TRUE) {
-    unfoldURI(nargs, uris);
-  }
-  else {
-    nargs = uris;
-  }
-  // we ignore -Z option here
-  size_t numSplit = option->getAsInt(PREF_SPLIT);
-  auto rg = createBtRequestGroup(metaInfoUri, option, nargs, torrent,
-                                 adjustAnnounceUri);
-  rg->setNumConcurrentCommand(numSplit);
-  result.push_back(rg);
+  result.push_back(createBtRequestGroup(download, metaInfoUri, option));
 }
 
 #endif // ENABLE_BITTORRENT
@@ -368,6 +559,74 @@ void createRequestGroupForMetalink(
 #endif // ENABLE_METALINK
 
 namespace {
+bool isThunderUri(const std::string& uri)
+{
+  return util::startsWith(uri, "thunder://") ||
+         util::startsWith(uri, "THUNDER://");
+}
+
+bool isBase64Char(char c)
+{
+  return ('A' <= c && c <= 'Z') || ('a' <= c && c <= 'z') ||
+         ('0' <= c && c <= '9') || c == '+' || c == '/';
+}
+
+std::string normalizeThunderPayload(std::string payload)
+{
+  if (payload.empty()) {
+    throw DL_ABORT_EX("Malformed Thunder URI: empty payload.");
+  }
+  bool padding = false;
+  for (size_t i = 0; i < payload.size(); ++i) {
+    const char c = payload[i];
+    if (c == '=') {
+      padding = true;
+      continue;
+    }
+    if (padding || !isBase64Char(c)) {
+      throw DL_ABORT_EX("Malformed Thunder URI: invalid Base64 payload.");
+    }
+  }
+  switch (payload.size() % 4) {
+  case 0:
+    break;
+  case 2:
+    payload += "==";
+    break;
+  case 3:
+    payload += "=";
+    break;
+  default:
+    throw DL_ABORT_EX("Malformed Thunder URI: invalid Base64 payload.");
+  }
+  return payload;
+}
+
+std::string decodeThunderUri(const std::string& uri)
+{
+  auto payload = normalizeThunderPayload(uri.substr(10));
+  const auto decoded = base64::decode(payload.begin(), payload.end());
+  if (decoded.size() < 4 || !util::startsWith(decoded, "AA") ||
+      decoded.compare(decoded.size() - 2, 2, "ZZ") != 0) {
+    throw DL_ABORT_EX(
+        "Malformed Thunder URI: decoded payload must be AA<URI>ZZ.");
+  }
+  auto canonical = decoded.substr(2, decoded.size() - 4);
+  ProtocolDetector detector;
+  if (!detector.isStreamProtocol(canonical)) {
+    throw DL_ABORT_EX(
+        "Malformed Thunder URI: decoded payload is not a downloadable URI.");
+  }
+  return canonical;
+}
+
+std::string normalizeInputUri(const std::string& uri)
+{
+  return isThunderUri(uri) ? decodeThunderUri(uri) : uri;
+}
+} // namespace
+
+namespace {
 class AccRequestGroup {
 private:
   std::vector<std::shared_ptr<RequestGroup>>& requestGroups_;
@@ -389,32 +648,29 @@ public:
 
   void operator()(const std::string& uri)
   {
-    if (detector_.isStreamProtocol(uri)) {
-      std::vector<std::string> streamURIs;
-      size_t numIter = option_->getAsInt(PREF_MAX_CONNECTION_PER_SERVER);
-      size_t numSplit = option_->getAsInt(PREF_SPLIT);
-      size_t num = std::min(numIter, numSplit);
-      for (size_t i = 0; i < num; ++i) {
-        streamURIs.push_back(uri);
+    std::string normalizedUri;
+    try {
+      normalizedUri = normalizeInputUri(uri);
+    }
+    catch (RecoverableException& e) {
+      if (throwOnError_) {
+        throw;
       }
-      auto rg = createRequestGroup(option_, streamURIs);
-      rg->setNumConcurrentCommand(numSplit);
-      requestGroups_.push_back(rg);
+      A2_LOG_ERROR_EX(EX_EXCEPTION_CAUGHT, e);
+      return;
+    }
+    if (detector_.isStreamProtocol(normalizedUri)) {
+      requestGroups_.push_back(createRequestGroup(option_, {normalizedUri}));
     }
 #ifdef ENABLE_BITTORRENT
-    else if (detector_.guessTorrentMagnet(uri)) {
-      requestGroups_.push_back(createBtMagnetRequestGroup(uri, option_));
+    else if (detector_.guessTorrentMagnet(normalizedUri)) {
+      requestGroups_.push_back(
+          createBtMagnetRequestGroup(normalizedUri, option_));
     }
-    else if (!ignoreLocalPath_ && detector_.guessTorrentFile(uri)) {
+    else if (!ignoreLocalPath_ && detector_.guessTorrentFile(normalizedUri)) {
       try {
-        bittorrent::ValueBaseBencodeParser parser;
-        auto torrent = parseFile(parser, uri);
-        if (!torrent) {
-          throw DL_ABORT_EX2("Bencode decoding failed",
-                             error_code::BENCODE_PARSE_ERROR);
-        }
-        requestGroups_.push_back(
-            createBtRequestGroup(uri, option_, {}, torrent.get()));
+        requestGroups_.push_back(createBtRequestGroup(
+            BtDownload::fromFile(normalizedUri, {}), normalizedUri, option_));
       }
       catch (RecoverableException& e) {
         if (throwOnError_) {
@@ -428,10 +684,24 @@ public:
       }
     }
 #endif // ENABLE_BITTORRENT
-#ifdef ENABLE_METALINK
-    else if (!ignoreLocalPath_ && detector_.guessMetalinkFile(uri)) {
+    else if (detector_.guessEd2kLink(normalizedUri)) {
       try {
-        Metalink2RequestGroup().generate(requestGroups_, uri, option_,
+        requestGroups_.push_back(
+            createEd2kRequestGroup(normalizedUri, option_));
+      }
+      catch (RecoverableException& e) {
+        if (throwOnError_) {
+          throw;
+        }
+        else {
+          A2_LOG_ERROR_EX(EX_EXCEPTION_CAUGHT, e);
+        }
+      }
+    }
+#ifdef ENABLE_METALINK
+    else if (!ignoreLocalPath_ && detector_.guessMetalinkFile(normalizedUri)) {
+      try {
+        Metalink2RequestGroup().generate(requestGroups_, normalizedUri, option_,
                                          option_->get(PREF_METALINK_BASE_URI));
       }
       catch (RecoverableException& e) {
@@ -448,10 +718,12 @@ public:
 #endif // ENABLE_METALINK
     else {
       if (throwOnError_) {
-        throw DL_ABORT_EX(fmt(MSG_UNRECOGNIZED_URI, uri.c_str()));
+        throw DL_ABORT_EX(fmt(MSG_UNRECOGNIZED_URI,
+                              logging::sanitizeUri(normalizedUri).c_str()));
       }
       else {
-        A2_LOG_ERROR(fmt(MSG_UNRECOGNIZED_URI, uri.c_str()));
+        A2_LOG_ERROR(fmt(MSG_UNRECOGNIZED_URI,
+                         logging::sanitizeUri(normalizedUri).c_str()));
       }
     }
   }
@@ -466,9 +738,35 @@ private:
 public:
   bool operator()(const std::string& uri)
   {
-    return detector_.isStreamProtocol(uri);
+    try {
+      return detector_.isStreamProtocol(normalizeInputUri(uri));
+    }
+    catch (RecoverableException& e) {
+      return false;
+    }
   }
 };
+} // namespace
+
+namespace {
+bool normalizeStreamUris(std::vector<std::string>& result,
+                         std::vector<std::string>::const_iterator first,
+                         std::vector<std::string>::const_iterator last,
+                         bool throwOnError)
+{
+  for (; first != last; ++first) {
+    try {
+      result.push_back(normalizeInputUri(*first));
+    }
+    catch (RecoverableException& e) {
+      if (throwOnError) {
+        throw;
+      }
+      A2_LOG_ERROR_EX(EX_EXCEPTION_CAUGHT, e);
+    }
+  }
+  return !result.empty();
+}
 } // namespace
 
 void createRequestGroupForUri(
@@ -492,16 +790,18 @@ void createRequestGroupForUri(
   else {
     auto strmProtoEnd = std::stable_partition(
         std::begin(nargs), std::end(nargs), StreamProtocolFilter());
-    // let's process http/ftp protocols first.
+    // Process stream protocols first.
     if (std::begin(nargs) != strmProtoEnd) {
-      size_t numIter = option->getAsInt(PREF_MAX_CONNECTION_PER_SERVER);
-      size_t numSplit = option->getAsInt(PREF_SPLIT);
-      std::vector<std::string> streamURIs;
-      splitURI(streamURIs, std::begin(nargs), strmProtoEnd, numSplit, numIter);
+      std::vector<std::string> normalizedStreamUris;
+      normalizedStreamUris.reserve(
+          std::distance(std::begin(nargs), strmProtoEnd));
+      if (!normalizeStreamUris(normalizedStreamUris, std::begin(nargs),
+                               strmProtoEnd, throwOnError)) {
+        return;
+      }
       try {
-        auto rg = createRequestGroup(option, streamURIs, true);
-        rg->setNumConcurrentCommand(numSplit);
-        result.push_back(rg);
+        result.push_back(
+            createRequestGroup(option, normalizedStreamUris, true));
       }
       catch (RecoverableException& e) {
         if (throwOnError) {

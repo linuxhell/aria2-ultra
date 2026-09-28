@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+platform=${1:-}
+
+if [ -z "$platform" ]; then
+  echo "Usage: $0 <linux|macos|windows|android>" >&2
+  exit 2
+fi
+
+section_flags="-Os -ffunction-sections -fdata-sections"
+debug_flags=
+build_workspace=${GITHUB_WORKSPACE:-$PWD}
+prefix_flags="-ffile-prefix-map=$build_workspace=. -fdebug-prefix-map=$build_workspace=."
+
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}
+export SOURCE_DATE_EPOCH
+
+case "${ARIA2_BUILD_PROFILE:-release}" in
+  release)
+    ;;
+  debug)
+    debug_flags="-g3 -fno-omit-frame-pointer"
+    ;;
+  *)
+    echo "Unknown ARIA2_BUILD_PROFILE: $ARIA2_BUILD_PROFILE" >&2
+    exit 2
+    ;;
+esac
+
+profile_flags="$section_flags${prefix_flags:+ $prefix_flags}${debug_flags:+ $debug_flags}"
+
+case "$platform" in
+  linux)
+    export RELEASE_CFLAGS="$profile_flags"
+    export RELEASE_LDFLAGS="-Wl,--gc-sections${debug_flags:+ -rdynamic}"
+    ;;
+  macos)
+    : "${MACOSX_VERSION_MIN:=11.0}"
+    export RELEASE_CFLAGS="-mmacosx-version-min=$MACOSX_VERSION_MIN $profile_flags"
+    export RELEASE_LDFLAGS="-L${PREFIX:-/usr/local}/lib -Wl,-dead_strip"
+    ;;
+  windows)
+    export RELEASE_CFLAGS="$profile_flags"
+    export RELEASE_LDFLAGS="-L${PREFIX:-/usr/local}/lib -Wl,--gc-sections -Wl,--no-insert-timestamp -static -static-libgcc -static-libstdc++"
+    ;;
+  android)
+    export RELEASE_CFLAGS="$profile_flags"
+    export RELEASE_LDFLAGS="-Wl,--gc-sections"
+    ;;
+  *)
+    echo "Unknown release size profile platform: $platform" >&2
+    exit 2
+    ;;
+esac
+
+export RELEASE_CPPFLAGS="${RELEASE_CPPFLAGS:-}"
+export RELEASE_CXXFLAGS="$RELEASE_CFLAGS"
+export RELEASE_CMAKE_FLAGS="-DCMAKE_C_FLAGS=$RELEASE_CFLAGS -DCMAKE_CXX_FLAGS=$RELEASE_CXXFLAGS -DCMAKE_EXE_LINKER_FLAGS=$RELEASE_LDFLAGS -DARIA2_RELEASE_SIZE_OPTIMIZED=ON"
+
+printf 'RELEASE_CFLAGS=%s\n' "$RELEASE_CFLAGS"
+printf 'RELEASE_LDFLAGS=%s\n' "$RELEASE_LDFLAGS"

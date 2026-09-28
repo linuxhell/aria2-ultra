@@ -33,42 +33,45 @@
  */
 /* copyright --> */
 #include "DownloadEngine.h"
+#include "CheckIntegrityMan.h"
+#include "DNSCache.h"
+#include "FileAllocationMan.h"
+#include "TimerA2.h"
+#include "a2netcompat.h"
+#include "a2time.h"
+#include "common.h"
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include <signal.h>
 
-#include <cstring>
-#include <cerrno>
 #include <algorithm>
-#include <numeric>
 #include <iterator>
 
 #include "StatCalc.h"
 #include "RequestGroup.h"
 #include "RequestGroupMan.h"
 #include "DownloadResult.h"
-#include "StatCalc.h"
-#include "LogFactory.h"
-#include "Logger.h"
+#include "Log.h"
 #include "SocketCore.h"
-#include "util.h"
+#include "support/Random.h"
 #include "a2functional.h"
-#include "DlAbortEx.h"
-#include "ServerStatMan.h"
-#include "CookieStorage.h"
-#include "A2STR.h"
-#include "AuthConfigFactory.h"
-#include "AuthConfig.h"
-#include "Request.h"
+#include "prefs.h"
 #include "EventPoll.h"
 #include "Command.h"
+#include "CurlSession.h"
+#include "SystemResolver.h"
 #include "FileAllocationEntry.h"
 #include "CheckIntegrityEntry.h"
-#include "BtProgressInfoFile.h"
 #include "DownloadContext.h"
-#include "fmt.h"
 #include "wallclock.h"
 #ifdef ENABLE_BITTORRENT
-#  include "BtRegistry.h"
+#  include "BtSession.h"
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_WEBSOCKET
 #  include "WebSocketSessionMan.h"
@@ -100,11 +103,8 @@ DownloadEngine::DownloadEngine(std::unique_ptr<EventPoll> eventPoll)
       noWait_(true),
       refreshInterval_(DEFAULT_REFRESH_INTERVAL),
       lastRefresh_(Timer::zero()),
-      cookieStorage_(make_unique<CookieStorage>()),
-#ifdef ENABLE_BITTORRENT
-      btRegistry_(make_unique<BtRegistry>()),
-#endif // ENABLE_BITTORRENT
       dnsCache_(make_unique<DNSCache>()),
+      systemResolver_(make_unique<SystemResolver>()),
       option_(nullptr)
 {
   unsigned char sessionId[20];
@@ -112,7 +112,18 @@ DownloadEngine::DownloadEngine(std::unique_ptr<EventPoll> eventPoll)
   sessionId_.assign(&sessionId[0], &sessionId[sizeof(sessionId)]);
 }
 
-DownloadEngine::~DownloadEngine() {}
+DownloadEngine::~DownloadEngine()
+{
+  // Native socket callbacks still refer to commands owned by this engine.
+  // Unregister them while both commands and request groups remain alive.
+  curlSession_.reset();
+  commands_.clear();
+  routineCommands_.clear();
+#ifdef ENABLE_BITTORRENT
+  btSession_.reset();
+#endif // ENABLE_BITTORRENT
+  requestGroupMan_.reset();
+}
 
 namespace {
 void executeCommand(std::deque<std::unique_ptr<Command>>& commands,
@@ -164,6 +175,19 @@ int DownloadEngine::run(bool oneshot)
     }
     noWait_ = false;
     global::wallclock().reset();
+#ifdef ENABLE_BITTORRENT
+    if (btSession_) {
+      btSession_->poll();
+    }
+#endif
+    rebalanceGlobalDownloadLimit();
+    if (curlSession_) {
+      curlSession_->poll();
+    }
+    if (systemResolver_->poll()) {
+      setNoWait(true);
+      setRefreshInterval(std::chrono::milliseconds(0));
+    }
     calculateStatistics();
     if (lastRefresh_.difference(global::wallclock()) + A2_DELTA_MILLIS >=
         refreshInterval_) {
@@ -176,12 +200,44 @@ int DownloadEngine::run(bool oneshot)
     }
     executeCommand(routineCommands_, Command::STATUS_ALL);
     afterEachIteration();
+    if (systemResolver_->hasPending()) {
+      refreshInterval_ =
+          std::min(refreshInterval_, std::chrono::milliseconds(25));
+    }
     if (!noWait_ && oneshot) {
       return 1;
     }
   }
   onEndOfRun();
   return 0;
+}
+
+void DownloadEngine::rebalanceGlobalDownloadLimit()
+{
+  if (!option_) {
+    return;
+  }
+  const auto overall = option_->getAsInt(PREF_MAX_OVERALL_DOWNLOAD_LIMIT);
+  auto curlLimit = overall;
+  auto btLimit = overall;
+#ifdef ENABLE_BITTORRENT
+  const auto btActive = btSession_ && btSession_->downloadSpeed() > 0;
+#else
+  const auto btActive = false;
+#endif
+  const auto curlActive = curlSession_ && curlSession_->activeCount() > 0;
+  if (overall > 0 && btActive && curlActive) {
+    curlLimit = std::max(1, overall / 2);
+    btLimit = std::max(1, overall - curlLimit);
+  }
+  if (curlSession_) {
+    curlSession_->setGlobalDownloadLimit(curlLimit);
+  }
+#ifdef ENABLE_BITTORRENT
+  if (btSession_) {
+    btSession_->setGlobalDownloadLimit(btLimit);
+  }
+#endif
 }
 
 void DownloadEngine::waitData()
@@ -227,6 +283,26 @@ bool DownloadEngine::deleteSocketForWriteCheck(
                                   EventPoll::EVENT_WRITE);
 }
 
+bool DownloadEngine::addSocketForReadCheck(sock_t socket, Command* command)
+{
+  return eventPoll_->addEvents(socket, command, EventPoll::EVENT_READ);
+}
+
+bool DownloadEngine::deleteSocketForReadCheck(sock_t socket, Command* command)
+{
+  return eventPoll_->deleteEvents(socket, command, EventPoll::EVENT_READ);
+}
+
+bool DownloadEngine::addSocketForWriteCheck(sock_t socket, Command* command)
+{
+  return eventPoll_->addEvents(socket, command, EventPoll::EVENT_WRITE);
+}
+
+bool DownloadEngine::deleteSocketForWriteCheck(sock_t socket, Command* command)
+{
+  return eventPoll_->deleteEvents(socket, command, EventPoll::EVENT_WRITE);
+}
+
 void DownloadEngine::calculateStatistics()
 {
   if (statCalc_) {
@@ -238,14 +314,14 @@ void DownloadEngine::onEndOfRun()
 {
   requestGroupMan_->removeStoppedGroup(this);
   requestGroupMan_->closeFile();
-  requestGroupMan_->save();
+  requestGroupMan_->checkpointActiveDownloads();
 }
 
 void DownloadEngine::afterEachIteration()
 {
   if (global::globalHaltRequested == 1) {
-    A2_LOG_NOTICE(_("Shutdown sequence commencing..."
-                    " Press Ctrl-C again for emergency shutdown."));
+    A2_LOG_INFO(_("Shutdown sequence commencing..."
+                  " Press Ctrl-C again for emergency shutdown."));
     requestHalt();
     global::globalHaltRequested = 2;
     setNoWait(true);
@@ -254,7 +330,7 @@ void DownloadEngine::afterEachIteration()
   }
 
   if (global::globalHaltRequested == 3) {
-    A2_LOG_NOTICE(_("Emergency shutdown sequence commencing..."));
+    A2_LOG_INFO(_("Emergency shutdown sequence commencing..."));
     requestForceHalt();
     global::globalHaltRequested = 4;
     setNoWait(true);
@@ -280,250 +356,24 @@ void DownloadEngine::setStatCalc(std::unique_ptr<StatCalc> statCalc)
   statCalc_ = std::move(statCalc);
 }
 
-#ifdef ENABLE_ASYNC_DNS
-bool DownloadEngine::addNameResolverCheck(
-    const std::shared_ptr<AsyncNameResolver>& resolver, Command* command)
+void DownloadEngine::setOption(Option* option)
 {
-  return eventPoll_->addNameResolver(resolver, command);
+  option_ = option;
+  if (option_ && !curlSession_) {
+    curlSession_ = make_unique<CurlSession>(option_);
+  }
 }
 
-bool DownloadEngine::deleteNameResolverCheck(
-    const std::shared_ptr<AsyncNameResolver>& resolver, Command* command)
+void DownloadEngine::setCurlSession(std::unique_ptr<CurlSession> session)
 {
-  return eventPoll_->deleteNameResolver(resolver, command);
+  curlSession_ = std::move(session);
 }
-#endif // ENABLE_ASYNC_DNS
 
 void DownloadEngine::setNoWait(bool b) { noWait_ = b; }
 
 void DownloadEngine::addRoutineCommand(std::unique_ptr<Command> command)
 {
   routineCommands_.push_back(std::move(command));
-}
-
-void DownloadEngine::poolSocket(const std::string& key,
-                                const SocketPoolEntry& entry)
-{
-  A2_LOG_INFO(fmt("Pool socket for %s", key.c_str()));
-  std::multimap<std::string, SocketPoolEntry>::value_type p(key, entry);
-  socketPool_.insert(p);
-}
-
-void DownloadEngine::evictSocketPool()
-{
-  if (socketPool_.empty()) {
-    return;
-  }
-
-  std::multimap<std::string, SocketPoolEntry> newPool;
-  A2_LOG_DEBUG("Scanning SocketPool and erasing timed out entry.");
-  for (auto& elem : socketPool_) {
-    if (!elem.second.isTimeout()) {
-      newPool.insert(elem);
-    }
-  }
-  A2_LOG_DEBUG(
-      fmt("%lu entries removed.",
-          static_cast<unsigned long>(socketPool_.size() - newPool.size())));
-  socketPool_ = std::move(newPool);
-}
-
-namespace {
-std::string createSockPoolKey(const std::string& host, uint16_t port,
-                              const std::string& username,
-                              const std::string& proxyhost, uint16_t proxyport)
-{
-  std::string key;
-  if (!username.empty()) {
-    key += util::percentEncode(username);
-    key += "@";
-  }
-  key += fmt("%s(%u)", host.c_str(), port);
-  if (!proxyhost.empty()) {
-    key += fmt("/%s(%u)", proxyhost.c_str(), proxyport);
-  }
-  return key;
-}
-} // namespace
-
-void DownloadEngine::poolSocket(const std::string& ipaddr, uint16_t port,
-                                const std::string& username,
-                                const std::string& proxyhost,
-                                uint16_t proxyport,
-                                const std::shared_ptr<SocketCore>& sock,
-                                const std::string& options,
-                                std::chrono::seconds timeout)
-{
-  SocketPoolEntry e(sock, options, std::move(timeout));
-  poolSocket(createSockPoolKey(ipaddr, port, username, proxyhost, proxyport),
-             e);
-}
-
-void DownloadEngine::poolSocket(const std::string& ipaddr, uint16_t port,
-                                const std::string& proxyhost,
-                                uint16_t proxyport,
-                                const std::shared_ptr<SocketCore>& sock,
-                                std::chrono::seconds timeout)
-{
-  SocketPoolEntry e(sock, std::move(timeout));
-  poolSocket(createSockPoolKey(ipaddr, port, A2STR::NIL, proxyhost, proxyport),
-             e);
-}
-
-namespace {
-bool getPeerInfo(Endpoint& res, const std::shared_ptr<SocketCore>& socket)
-{
-  try {
-    res = socket->getPeerInfo();
-    return true;
-  }
-  catch (RecoverableException& e) {
-    // socket->getPeerInfo() can fail if the socket has been
-    // disconnected.
-    A2_LOG_INFO_EX("Getting peer info failed. Pooling socket canceled.", e);
-    return false;
-  }
-}
-} // namespace
-
-void DownloadEngine::poolSocket(const std::shared_ptr<Request>& request,
-                                const std::shared_ptr<Request>& proxyRequest,
-                                const std::shared_ptr<SocketCore>& socket,
-                                std::chrono::seconds timeout)
-{
-  if (proxyRequest) {
-    // If proxy is defined, then pool socket with its hostname.
-    poolSocket(request->getHost(), request->getPort(), proxyRequest->getHost(),
-               proxyRequest->getPort(), socket, std::move(timeout));
-    return;
-  }
-
-  Endpoint peerInfo;
-  if (getPeerInfo(peerInfo, socket)) {
-    poolSocket(peerInfo.addr, peerInfo.port, A2STR::NIL, 0, socket,
-               std::move(timeout));
-  }
-}
-
-void DownloadEngine::poolSocket(const std::shared_ptr<Request>& request,
-                                const std::string& username,
-                                const std::shared_ptr<Request>& proxyRequest,
-                                const std::shared_ptr<SocketCore>& socket,
-                                const std::string& options,
-                                std::chrono::seconds timeout)
-{
-  if (proxyRequest) {
-    // If proxy is defined, then pool socket with its hostname.
-    poolSocket(request->getHost(), request->getPort(), username,
-               proxyRequest->getHost(), proxyRequest->getPort(), socket,
-               options, std::move(timeout));
-    return;
-  }
-
-  Endpoint peerInfo;
-  if (getPeerInfo(peerInfo, socket)) {
-    poolSocket(peerInfo.addr, peerInfo.port, username, A2STR::NIL, 0, socket,
-               options, std::move(timeout));
-  }
-}
-
-std::multimap<std::string, DownloadEngine::SocketPoolEntry>::iterator
-DownloadEngine::findSocketPoolEntry(const std::string& key)
-{
-  std::pair<std::multimap<std::string, SocketPoolEntry>::iterator,
-            std::multimap<std::string, SocketPoolEntry>::iterator>
-      range = socketPool_.equal_range(key);
-  for (auto i = range.first, eoi = range.second; i != eoi; ++i) {
-    const SocketPoolEntry& e = (*i).second;
-    // We assume that if socket is readable it means peer shutdowns
-    // connection and the socket will receive EOF. So skip it.
-    if (!e.isTimeout() && !e.getSocket()->isReadable(0)) {
-      A2_LOG_INFO(fmt("Found socket for %s", key.c_str()));
-      return i;
-    }
-  }
-  return socketPool_.end();
-}
-
-std::shared_ptr<SocketCore>
-DownloadEngine::popPooledSocket(const std::string& ipaddr, uint16_t port,
-                                const std::string& proxyhost,
-                                uint16_t proxyport)
-{
-  std::shared_ptr<SocketCore> s;
-  auto i = findSocketPoolEntry(
-      createSockPoolKey(ipaddr, port, A2STR::NIL, proxyhost, proxyport));
-  if (i != socketPool_.end()) {
-    s = (*i).second.getSocket();
-    socketPool_.erase(i);
-  }
-  return s;
-}
-
-std::shared_ptr<SocketCore>
-DownloadEngine::popPooledSocket(std::string& options, const std::string& ipaddr,
-                                uint16_t port, const std::string& username,
-                                const std::string& proxyhost,
-                                uint16_t proxyport)
-{
-  std::shared_ptr<SocketCore> s;
-  auto i = findSocketPoolEntry(
-      createSockPoolKey(ipaddr, port, username, proxyhost, proxyport));
-  if (i != socketPool_.end()) {
-    s = (*i).second.getSocket();
-    options = (*i).second.getOptions();
-    socketPool_.erase(i);
-  }
-  return s;
-}
-
-std::shared_ptr<SocketCore>
-DownloadEngine::popPooledSocket(const std::vector<std::string>& ipaddrs,
-                                uint16_t port)
-{
-  std::shared_ptr<SocketCore> s;
-  for (const auto& ipaddr : ipaddrs) {
-    s = popPooledSocket(ipaddr, port, A2STR::NIL, 0);
-    if (s) {
-      break;
-    }
-  }
-  return s;
-}
-
-std::shared_ptr<SocketCore>
-DownloadEngine::popPooledSocket(std::string& options,
-                                const std::vector<std::string>& ipaddrs,
-                                uint16_t port, const std::string& username)
-{
-  std::shared_ptr<SocketCore> s;
-  for (const auto& ipaddr : ipaddrs) {
-    s = popPooledSocket(options, ipaddr, port, username, A2STR::NIL, 0);
-    if (s) {
-      break;
-    }
-  }
-  return s;
-}
-
-DownloadEngine::SocketPoolEntry::SocketPoolEntry(
-    const std::shared_ptr<SocketCore>& socket, const std::string& options,
-    std::chrono::seconds timeout)
-    : socket_(socket), options_(options), timeout_(std::move(timeout))
-{
-}
-
-DownloadEngine::SocketPoolEntry::SocketPoolEntry(
-    const std::shared_ptr<SocketCore>& socket, std::chrono::seconds timeout)
-    : socket_(socket), timeout_(std::move(timeout))
-{
-}
-
-DownloadEngine::SocketPoolEntry::~SocketPoolEntry() = default;
-
-bool DownloadEngine::SocketPoolEntry::isTimeout() const
-{
-  return registeredTime_.difference(global::wallclock()) >= timeout_;
 }
 
 cuid_t DownloadEngine::newCUID() { return cuidCounter_.newID(); }
@@ -553,26 +403,11 @@ void DownloadEngine::removeCachedIPAddress(const std::string& hostname,
   dnsCache_->remove(hostname, port);
 }
 
-void DownloadEngine::setAuthConfigFactory(
-    std::unique_ptr<AuthConfigFactory> factory)
-{
-  authConfigFactory_ = std::move(factory);
-}
-
-const std::unique_ptr<AuthConfigFactory>&
-DownloadEngine::getAuthConfigFactory() const
-{
-  return authConfigFactory_;
-}
-
-const std::unique_ptr<CookieStorage>& DownloadEngine::getCookieStorage() const
-{
-  return cookieStorage_;
-}
-
 void DownloadEngine::setRefreshInterval(std::chrono::milliseconds interval)
 {
-  refreshInterval_ = std::move(interval);
+  // Timer producers may shorten this iteration's wait, never postpone a
+  // deadline already requested by another transfer or protocol.
+  refreshInterval_ = std::min(refreshInterval_, interval);
 }
 
 void DownloadEngine::addCommand(std::vector<std::unique_ptr<Command>> commands)
@@ -591,6 +426,13 @@ void DownloadEngine::setRequestGroupMan(std::unique_ptr<RequestGroupMan> rgman)
 {
   requestGroupMan_ = std::move(rgman);
 }
+
+#ifdef ENABLE_BITTORRENT
+void DownloadEngine::setBtSession(std::unique_ptr<BtSession> session)
+{
+  btSession_ = std::move(session);
+}
+#endif // ENABLE_BITTORRENT
 
 void DownloadEngine::setFileAllocationMan(
     std::unique_ptr<FileAllocationMan> faman)

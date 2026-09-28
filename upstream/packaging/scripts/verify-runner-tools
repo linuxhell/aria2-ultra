@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  echo "Usage: $0 <linux|macos|windows-x86_64|windows-arm64|android|release-tools|ci>" >&2
+  exit 2
+}
+
+test $# -eq 1 || usage
+
+profile=$1
+
+case "$profile" in
+  linux)
+    tools="cmake ninja pkg-config make curl tar strip readelf strings"
+    ;;
+  macos)
+    tools="cmake ninja pkg-config make curl tar clang strip otool strings"
+    ;;
+  windows-x86_64)
+    tools="cmake ninja pkg-config make curl tar x86_64-w64-mingw32-clang x86_64-w64-mingw32-clang++ x86_64-w64-mingw32-ar x86_64-w64-mingw32-ranlib x86_64-w64-mingw32-windres x86_64-w64-mingw32-strip x86_64-w64-mingw32-objdump strings"
+    ;;
+  windows-arm64)
+    tools="cmake ninja pkg-config make curl tar aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-ar aarch64-w64-mingw32-ranlib aarch64-w64-mingw32-strip aarch64-w64-mingw32-objdump strings"
+    ;;
+  android)
+    tools="cmake ninja pkg-config make curl tar unzip dpkg-architecture perl strings"
+    ;;
+  release-tools)
+    tools="git gh sha256sum sed grep sort"
+    ;;
+  ci)
+    tools="cmake ninja make perl"
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+echo "Verifying runner tools for $profile"
+
+for tool in $tools; do
+  path=$(command -v "$tool" 2>/dev/null || true)
+  if [ -z "$path" ]; then
+    echo "Missing required runner tool for $profile: $tool" >&2
+    exit 1
+  fi
+  echo "$tool=$path"
+done

@@ -59,13 +59,23 @@ class ServerStat;
 class Option;
 class OutputFile;
 class UriListParser;
+#ifdef ENABLE_BITTORRENT
+class BtStateStore;
+#endif
 class WrDiskCache;
 class OpenedFileCounter;
+namespace ed2k {
+class Ed2kSession;
+class UploadQueue;
+} // namespace ed2k
 
 typedef IndexedList<a2_gid_t, std::shared_ptr<RequestGroup>> RequestGroupList;
 typedef IndexedList<a2_gid_t, std::shared_ptr<DownloadResult>>
     DownloadResultList;
 
+// Owns active/waiting tasks, retained results and shared protocol state on the
+// engine thread. Stop processing persists payload/state before releasing a
+// task's runtime resources or publishing its completion event.
 class RequestGroupMan {
 private:
   RequestGroupList requestGroups_;
@@ -85,9 +95,9 @@ private:
   Timer optimizationSpeedTimer_;
 
   // The number of simultaneous active downloads, excluding seed only
-  // item if PREF_BT_DETACH_SEED_ONLY is true.  We rely on this
+  // item if PREF_DETACH_SHARE_ONLY is true.  We rely on this
   // variable to maintain the number of concurrent downloads.  If
-  // PREF_BT_DETACH_SEED_ONLY is false, this variable is equal to
+  // PREF_DETACH_SHARE_ONLY is false, this variable is equal to
   // requestGroups_.size().
   size_t numActive_;
 
@@ -123,12 +133,22 @@ private:
 
   std::shared_ptr<OpenedFileCounter> openedFileCounter_;
 
+#ifdef ENABLE_BITTORRENT
+  std::unique_ptr<BtStateStore> btStateStore_;
+  bool btStateStartupCollectionPending_ = true;
+#endif
+
+  std::unique_ptr<ed2k::UploadQueue> ed2kUploadQueue_;
+  std::unique_ptr<ed2k::Ed2kSession> ed2kSession_;
+
   // The number of stopped downloads so far in total, including
   // evicted DownloadResults.
   size_t numStoppedTotal_;
 
   // SHA1 hash value of the content of last session serialization.
   std::string lastSessionHash_;
+  bool sessionSavePending_ = false;
+  Timer lastSessionSaveAttempt_ = Timer::zero();
 
   void formatDownloadResultFull(
       OutputFile& out, const char* status,
@@ -138,14 +158,14 @@ private:
       const char* status,
       const std::shared_ptr<DownloadResult>& downloadResult) const;
 
-  void configureRequestGroup(
-      const std::shared_ptr<RequestGroup>& requestGroup) const;
-
-  void addRequestGroupIndex(const std::shared_ptr<RequestGroup>& group);
-  void addRequestGroupIndex(
-      const std::vector<std::shared_ptr<RequestGroup>>& groups);
-
   int optimizeConcurrentDownloads();
+  void appendReservedGroups(
+      const std::vector<std::shared_ptr<RequestGroup>>& groups);
+  bool activateGroup(const std::shared_ptr<RequestGroup>& group,
+                     DownloadEngine* engine);
+  bool processStoppedGroup(const std::shared_ptr<RequestGroup>& group,
+                           DownloadEngine* engine);
+  void finishStoppedFiles(const std::shared_ptr<RequestGroup>& group);
 
 public:
   RequestGroupMan(std::vector<std::shared_ptr<RequestGroup>> requestGroups,
@@ -155,7 +175,11 @@ public:
 
   bool downloadFinished();
 
-  void save();
+  void checkpointActiveDownloads();
+
+  // Commit the current task set before acknowledging lifecycle mutations.
+  bool saveSession();
+  bool sessionSaveRetryDue() const;
 
   void closeFile();
 
@@ -167,9 +191,8 @@ public:
 
   void fillRequestGroupFromReserver(DownloadEngine* e);
 
-  // Note that this method does not call addRequestGroupIndex(). This
-  // method should be considered as private, but exposed for unit
-  // testing purpose.
+  void reduceActiveDownloadsToLimit(DownloadEngine* e);
+
   void addRequestGroup(const std::shared_ptr<RequestGroup>& group);
 
   void
@@ -263,7 +286,22 @@ public:
   // result was removed. Otherwise returns false.
   bool removeDownloadResult(a2_gid_t gid);
 
+  // Requeue a failed presentation without relinquishing its recovery identity.
+  void retryMedia(a2_gid_t gid, const Option* changes = nullptr);
+
   void addDownloadResult(const std::shared_ptr<DownloadResult>& downloadResult);
+
+#ifdef ENABLE_BITTORRENT
+  BtStateStore* getBtStateStore() const { return btStateStore_.get(); }
+  void collectBtStateGarbage();
+#endif
+
+  ed2k::UploadQueue* getEd2kUploadQueue() const
+  {
+    return ed2kUploadQueue_.get();
+  }
+
+  ed2k::Ed2kSession* getEd2kSession() const { return ed2kSession_.get(); }
 
   const std::vector<std::shared_ptr<DownloadResult>>&
   getUnfinishedDownloadResult() const
@@ -352,11 +390,6 @@ public:
   bool getKeepRunning() const { return keepRunning_; }
 
   size_t getNumStoppedTotal() const { return numStoppedTotal_; }
-
-  void setLastSessionHash(std::string lastSessionHash)
-  {
-    lastSessionHash_ = std::move(lastSessionHash);
-  }
 
   const std::string& getLastSessionHash() const { return lastSessionHash_; }
 

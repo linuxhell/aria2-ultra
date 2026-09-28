@@ -33,15 +33,25 @@
  */
 /* copyright --> */
 #include "DownloadContext.h"
+#include "ContextAttribute.h"
+#include "SegList.h"
+#include "TimerA2.h"
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <algorithm>
 
 #include "FileEntry.h"
 #include "fmt.h"
-#include "util.h"
-#include "wallclock.h"
-#include "DlAbortEx.h"
 #include "a2functional.h"
+#include "DlAbortEx.h"
+#include "wallclock.h"
 #include "Signature.h"
 #include "RequestGroupMan.h"
 
@@ -268,6 +278,11 @@ bool DownloadContext::isChecksumVerificationAvailable() const
   return !digest_.empty() && !hashType_.empty();
 }
 
+bool DownloadContext::isChecksumVerificationPending() const
+{
+  return isChecksumVerificationAvailable() && !checksumVerified_;
+}
+
 bool DownloadContext::isPieceHashVerificationAvailable() const
 {
   return !pieceHashType_.empty() && pieceHashes_.size() > 0 &&
@@ -280,7 +295,8 @@ const std::string& DownloadContext::getPieceHash(size_t index) const
     return pieceHashes_[index];
   }
   else {
-    return A2STR::NIL;
+    static const std::string empty;
+    return empty;
   }
 }
 
@@ -310,21 +326,12 @@ void DownloadContext::updateDownload(size_t bytes)
   }
 }
 
-void DownloadContext::updateUploadSpeed(size_t bytes)
+void DownloadContext::updateUpload(size_t bytes)
 {
-  netStat_.updateUploadSpeed(bytes);
+  netStat_.updateUpload(bytes);
   auto rgman = ownerRequestGroup_->getRequestGroupMan();
   if (rgman) {
-    rgman->getNetStat().updateUploadSpeed(bytes);
-  }
-}
-
-void DownloadContext::updateUploadLength(size_t bytes)
-{
-  netStat_.updateUploadLength(bytes);
-  auto rgman = ownerRequestGroup_->getRequestGroupMan();
-  if (rgman) {
-    rgman->getNetStat().updateUploadLength(bytes);
+    rgman->getNetStat().updateUpload(bytes);
   }
 }
 

@@ -33,6 +33,17 @@
  */
 /* copyright --> */
 #include "ConsoleStatCalc.h"
+#include "GroupId.h"
+#include "TransferStat.h"
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 
 #ifdef HAVE_TERMIOS_H
 #  include <termios.h>
@@ -43,6 +54,8 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <algorithm>
@@ -50,14 +63,18 @@
 #include <sstream>
 #include <iterator>
 
+#include "a2time.h"
 #include "DownloadEngine.h"
 #include "RequestGroupMan.h"
 #include "RequestGroup.h"
+#include "media/MediaDownload.h"
 #include "FileAllocationMan.h"
 #include "FileAllocationEntry.h"
 #include "CheckIntegrityMan.h"
 #include "CheckIntegrityEntry.h"
-#include "util.h"
+#include "support/Text.h"
+#include "support/Numbers.h"
+#include "a2functional.h"
 #include "DownloadContext.h"
 #include "wallclock.h"
 #include "FileEntry.h"
@@ -66,9 +83,7 @@
 #include "Option.h"
 
 #ifdef ENABLE_BITTORRENT
-#  include "bittorrent_helper.h"
-#  include "PeerStorage.h"
-#  include "BtRegistry.h"
+#  include "BtDownload.h"
 #endif // ENABLE_BITTORRENT
 
 namespace aria2 {
@@ -81,7 +96,7 @@ std::string SizeFormatter::operator()(int64_t size) const
 namespace {
 class AbbrevSizeFormatter : public SizeFormatter {
 protected:
-  virtual std::string format(int64_t size) const CXX11_OVERRIDE
+  virtual std::string format(int64_t size) const override
   {
     return util::abbrevSize(size);
   }
@@ -91,7 +106,7 @@ protected:
 namespace {
 class PlainSizeFormatter : public SizeFormatter {
 protected:
-  virtual std::string format(int64_t size) const CXX11_OVERRIDE
+  virtual std::string format(int64_t size) const override
   {
     return util::itos(size);
   }
@@ -99,11 +114,102 @@ protected:
 } // namespace
 
 namespace {
+
+// True when the console locale advertises UTF-8, so the readout can use
+// block-element characters for the progress bar.
+bool utf8Console()
+{
+#ifdef __MINGW32__
+  return false;
+#else  // !__MINGW32__
+  static const bool utf8 = []() {
+    for (const char* name : {"LC_ALL", "LC_CTYPE", "LANG"}) {
+      const char* value = getenv(name);
+      if (value && *value) {
+        std::string v = util::toLower(value);
+        return v.find("utf-8") != std::string::npos ||
+               v.find("utf8") != std::string::npos;
+      }
+    }
+    return false;
+  }();
+  return utf8;
+#endif // !__MINGW32__
+}
+
+// Appends a progress bar of `width` cells. UTF-8 terminals get eighth-block
+// sub-cell resolution; everything else gets a plain ASCII bar.
+void appendProgressBar(ColorizedStream& o, int64_t completed, int64_t total,
+                       size_t width)
+{
+  const double frac =
+      total > 0 ? static_cast<double>(completed) / static_cast<double>(total)
+                : 0.0;
+  if (utf8Console()) {
+    // U+2588 FULL BLOCK, U+2589..U+258F partial left blocks, U+2591 LIGHT
+    // SHADE for the unfilled remainder.
+    static const char* const partial[] = {"",
+                                          "\xE2\x96\x8F",
+                                          "\xE2\x96\x8E",
+                                          "\xE2\x96\x8D",
+                                          "\xE2\x96\x8C",
+                                          "\xE2\x96\x8B",
+                                          "\xE2\x96\x8A",
+                                          "\xE2\x96\x89"};
+    const double cells = frac * width;
+    size_t full = static_cast<size_t>(cells);
+    const int eighth =
+        static_cast<int>((cells - static_cast<double>(full)) * 8);
+    std::string bar;
+    for (size_t i = 0; i < full; ++i) {
+      bar += "\xE2\x96\x88";
+    }
+    if (full < width && eighth > 0) {
+      bar += partial[eighth];
+      ++full;
+    }
+    o << colors::green << bar << colors::clear;
+    std::string rest;
+    for (size_t i = full; i < width; ++i) {
+      rest += "\xE2\x96\x91";
+    }
+    o << rest;
+    return;
+  }
+  size_t full = static_cast<size_t>(frac * width);
+  if (full > width) {
+    full = width;
+  }
+  std::string bar(full, '=');
+  if (full < width) {
+    bar += '>';
+  }
+  o << "[" << colors::green << bar << colors::clear;
+  if (full < width) {
+    o << std::string(width - full - 1, ' ');
+  }
+  o << "]";
+}
+
+} // namespace
+
+namespace {
 void printSizeProgress(ColorizedStream& o,
                        const std::shared_ptr<RequestGroup>& rg,
                        const TransferStat& stat,
-                       const SizeFormatter& sizeFormatter)
+                       const SizeFormatter& sizeFormatter, bool withPercent)
 {
+  if (rg->getMediaDownload()) {
+    const auto& media = rg->getMediaDownload()->snapshot();
+    o << media.state << " " << media.completedDuration / 1000 << "s";
+    if (!media.live && media.duration > 0) {
+      o << "/" << media.duration / 1000 << "s";
+      if (withPercent)
+        o << "(" << static_cast<int>(100 * media.progress()) << "%)";
+    }
+    o << " " << sizeFormatter(media.downloadedLength) << "B";
+    return;
+  }
 #ifdef ENABLE_BITTORRENT
   if (rg->isSeeder()) {
     o << "SEED(";
@@ -123,7 +229,7 @@ void printSizeProgress(ColorizedStream& o,
   {
     o << sizeFormatter(rg->getCompletedLength()) << "B/"
       << sizeFormatter(rg->getTotalLength()) << "B";
-    if (rg->getTotalLength() > 0) {
+    if (withPercent && rg->getTotalLength() > 0) {
       o << colors::cyan << "("
         << 100 * rg->getCompletedLength() / rg->getTotalLength() << "%)";
       o << colors::clear;
@@ -137,9 +243,9 @@ void printProgressCompact(ColorizedStream& o, const DownloadEngine* e,
                           const SizeFormatter& sizeFormatter)
 {
   if (!e->getRequestGroupMan()->downloadFinished()) {
-    NetStat& netstat = e->getRequestGroupMan()->getNetStat();
-    int dl = netstat.calculateDownloadSpeed();
-    int ul = netstat.calculateUploadSpeed();
+    const auto stat = e->getRequestGroupMan()->calculateStat();
+    int dl = stat.downloadSpeed;
+    int ul = stat.uploadSpeed;
     o << colors::magenta << "[" << colors::clear << "DL:" << colors::green
       << sizeFormatter(dl) << "B" << colors::clear;
     if (ul) {
@@ -157,7 +263,7 @@ void printProgressCompact(ColorizedStream& o, const DownloadEngine* e,
     TransferStat stat = rg->calculateStat();
     o << colors::magenta << "[" << colors::clear << "#"
       << GroupId::toAbbrevHex(rg->getGID()) << " ";
-    printSizeProgress(o, rg, stat, sizeFormatter);
+    printSizeProgress(o, rg, stat, sizeFormatter, true);
     o << colors::magenta << "]" << colors::clear;
   }
   if (cnt < groups.size()) {
@@ -168,7 +274,8 @@ void printProgressCompact(ColorizedStream& o, const DownloadEngine* e,
 
 namespace {
 void printProgress(ColorizedStream& o, const std::shared_ptr<RequestGroup>& rg,
-                   const DownloadEngine* e, const SizeFormatter& sizeFormatter)
+                   const DownloadEngine* e, const SizeFormatter& sizeFormatter,
+                   size_t barWidth)
 {
   TransferStat stat = rg->calculateStat();
   int eta = 0;
@@ -178,13 +285,26 @@ void printProgress(ColorizedStream& o, const std::shared_ptr<RequestGroup>& rg,
   }
   o << colors::magenta << "[" << colors::clear << "#"
     << GroupId::toAbbrevHex(rg->getGID()) << " ";
-  printSizeProgress(o, rg, stat, sizeFormatter);
+  const auto* media =
+      rg->getMediaDownload() ? &rg->getMediaDownload()->snapshot() : nullptr;
+  const auto total =
+      media ? (media->live ? 0 : media->duration) : rg->getTotalLength();
+  const auto completed = media ? static_cast<int64_t>(media->progress() * total)
+                               : rg->getCompletedLength();
+  const bool showBar = barWidth > 0 && total > 0 && !rg->isSeeder();
+  if (showBar) {
+    appendProgressBar(o, completed, total, barWidth);
+    std::string pct = util::itos(100 * completed / total);
+    if (pct.size() < 3) {
+      pct.insert(0, 3 - pct.size(), ' ');
+    }
+    o << " " << colors::cyan << pct << "%" << colors::clear << " ";
+  }
+  printSizeProgress(o, rg, stat, sizeFormatter, !showBar);
   o << " CN:" << rg->getNumConnection();
 #ifdef ENABLE_BITTORRENT
-  auto btObj = e->getBtRegistry()->get(rg->getGID());
-  if (btObj) {
-    const PeerSet& peers = btObj->peerStorage->getUsedPeers();
-    o << " SD:" << countSeeder(peers.begin(), peers.end());
+  if (rg->getBtDownload()) {
+    o << " SD:" << rg->getBtDownload()->snapshot().numSeeds;
   }
 #endif // ENABLE_BITTORRENT
 
@@ -222,7 +342,7 @@ public:
   {
     const char SEP_CHAR = '-';
     ColorizedStream o;
-    printProgress(o, rg, e_, sizeFormatter_);
+    printProgress(o, rg, e_, sizeFormatter_, 0);
     const std::vector<std::shared_ptr<FileEntry>>& fileEntries =
         rg->getDownloadContext()->getFileEntries();
     o << "\nFILE: ";
@@ -241,21 +361,14 @@ void printProgressSummary(const RequestGroupList& groups, size_t cols,
                           const SizeFormatter& sizeFormatter)
 {
   const char SEP_CHAR = '=';
-  time_t now;
-  time(&now);
   std::stringstream o;
   o << " *** Download Progress Summary";
   {
-    time_t now;
-    struct tm* staticNowtmPtr;
-    char buf[26];
-    if (time(&now) != (time_t)-1 &&
-        (staticNowtmPtr = localtime(&now)) != nullptr &&
-        asctime_r(staticNowtmPtr, buf) != nullptr) {
-      char* lfptr = strchr(buf, '\n');
-      if (lfptr) {
-        *lfptr = '\0';
-      }
+    time_t now = time(nullptr);
+    struct tm tmbuf;
+    char buf[24];
+    if (localtime_r(&now, &tmbuf) != nullptr &&
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tmbuf) != 0) {
       o << " as of " << buf;
     }
   }
@@ -304,8 +417,8 @@ void ConsoleStatCalc::calculateStat(const DownloadEngine* e)
 #ifndef __MINGW32__
 #  ifdef HAVE_TERMIOS_H
     struct winsize size;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
-      cols = std::max(0, (int)size.ws_col - 1);
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) {
+      cols = size.ws_col - 1;
     }
 #  endif // HAVE_TERMIOS_H
 #else    // __MINGW32__
@@ -315,16 +428,38 @@ void ConsoleStatCalc::calculateStat(const DownloadEngine* e)
       cols = std::max(0, info.dwSize.X - 2);
     }
 #endif   // !__MINGW32__
-    std::string line(cols, ' ');
-    global::cout()->printf("\r%s\r", line.c_str());
   }
-  ColorizedStream o;
+
+  // The readout line is repainted with one write() so the console never
+  // shows a half-cleared line. POSIX ANSI terminals erase with CSI K;
+  // Windows consoles (whose ANSI filter only handles colors) and dumb
+  // terminals overwrite with blanks instead.
+  const bool color = isTTY_ && global::cout()->supportsColor() && colorOutput_;
+#ifdef __MINGW32__
+  const bool ansiErase = false;
+#else  // !__MINGW32__
+  const bool ansiErase = isTTY_ && global::cout()->supportsColor();
+#endif // !__MINGW32__
+  std::string clearSeq("\r");
+  if (isTTY_) {
+    if (ansiErase) {
+      clearSeq += "\x1b[K";
+    }
+    else {
+      clearSeq.append(cols, ' ');
+      clearSeq += '\r';
+    }
+  }
+
   if (e->getRequestGroupMan()->countRequestGroup() > 0) {
     if ((summaryInterval_ > 0_s) &&
         lastSummaryNotified_.difference(global::wallclock()) +
                 A2_DELTA_MILLIS >=
             summaryInterval_) {
       lastSummaryNotified_ = global::wallclock();
+      if (isTTY_) {
+        global::cout()->write(clearSeq.c_str());
+      }
       printProgressSummary(e->getRequestGroupMan()->getRequestGroups(), cols, e,
                            sizeFormatter);
       global::cout()->write("\n");
@@ -332,14 +467,19 @@ void ConsoleStatCalc::calculateStat(const DownloadEngine* e)
     }
   }
   if (!readoutVisibility_) {
+    if (isTTY_) {
+      global::cout()->write(clearSeq.c_str());
+      global::cout()->flush();
+    }
     return;
   }
+  ColorizedStream o;
   size_t numGroup = e->getRequestGroupMan()->countRequestGroup();
-  const bool color = global::cout()->supportsColor() && isTTY_ && colorOutput_;
   if (numGroup == 1) {
     const std::shared_ptr<RequestGroup>& rg =
         *e->getRequestGroupMan()->getRequestGroups().begin();
-    printProgress(o, rg, e, sizeFormatter);
+    const size_t barWidth = isTTY_ && cols >= 74 ? 20 : 0;
+    printProgress(o, rg, e, sizeFormatter, barWidth);
   }
   else if (numGroup > 1) {
     // For more than 2 RequestGroups, use compact readout form
@@ -385,14 +525,9 @@ void ConsoleStatCalc::calculateStat(const DownloadEngine* e)
     }
   }
   if (isTTY_) {
-    if (truncate_) {
-      auto str = o.str(color, cols);
-      global::cout()->write(str.c_str());
-    }
-    else {
-      auto str = o.str(color);
-      global::cout()->write(str.c_str());
-    }
+    std::string out(clearSeq);
+    out += truncate_ ? o.str(color, cols) : o.str(color);
+    global::cout()->write(out.c_str());
     global::cout()->flush();
   }
   else {

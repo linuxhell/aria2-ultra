@@ -33,7 +33,11 @@
  */
 /* copyright --> */
 #include "ChunkChecksum.h"
-#include "A2STR.h"
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace aria2 {
 
@@ -68,7 +72,8 @@ const std::string& ChunkChecksum::getPieceHash(size_t index) const
     return pieceHashes_[index];
   }
   else {
-    return A2STR::NIL;
+    static const std::string empty;
+    return empty;
   }
 }
 

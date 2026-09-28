@@ -33,16 +33,18 @@
  */
 /* copyright --> */
 #include "AbstractHttpServerResponseCommand.h"
+#include "Command.h"
+#include "a2functional.h"
+#include <cinttypes>
+#include <cstddef>
+#include <memory>
 #include "SocketCore.h"
 #include "DownloadEngine.h"
 #include "HttpServer.h"
-#include "Logger.h"
-#include "LogFactory.h"
-#include "HttpServerCommand.h"
+#include "Log.h"
 #include "RequestGroupMan.h"
 #include "RecoverableException.h"
 #include "wallclock.h"
-#include "util.h"
 #include "fmt.h"
 
 namespace aria2 {
@@ -107,23 +109,21 @@ bool AbstractHttpServerResponseCommand::execute()
     }
   }
   catch (RecoverableException& e) {
-    A2_LOG_INFO_EX(fmt("CUID#%" PRId64
-                       " - Error occurred while transmitting response body.",
-                       getCuid()),
-                   e);
+    A2_LOG_DEBUG_EX(fmt("CUID#%" PRId64
+                        " - Error occurred while transmitting response body.",
+                        getCuid()),
+                    e);
     return true;
   }
   if (httpServer_->sendBufferIsEmpty()) {
-    A2_LOG_INFO(fmt("CUID#%" PRId64 " - HttpServer: all response transmitted.",
-                    getCuid()));
     afterSend(httpServer_, e_);
     return true;
   }
   else {
     if (timeoutTimer_.difference(global::wallclock()) >= 30_s) {
-      A2_LOG_INFO(fmt("CUID#%" PRId64
-                      " - HttpServer: Timeout while transmitting response.",
-                      getCuid()));
+      A2_LOG_DEBUG(fmt("CUID#%" PRId64
+                       " - HttpServer: Timeout while transmitting response.",
+                       getCuid()));
       return true;
     }
     else {

@@ -33,21 +33,26 @@
  */
 /* copyright --> */
 #include "ServerStatMan.h"
+#include "TimeA2.h"
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
 
 #include <cstring>
 #include <cstdio>
-#include <algorithm>
 #include <iterator>
 #include <vector>
 
 #include "ServerStat.h"
-#include "util.h"
-#include "RecoverableException.h"
-#include "a2functional.h"
-#include "BufferedFile.h"
-#include "message.h"
+#include "support/Text.h"
+#include "support/Numbers.h"
 #include "fmt.h"
-#include "LogFactory.h"
+#include "message.h"
+#include "a2iterator.h"
+#include "BufferedFile.h"
+#include "Log.h"
 #include "File.h"
 
 namespace aria2 {
@@ -107,7 +112,7 @@ bool ServerStatMan::save(const std::string& filename) const
     }
   }
   if (File(tempfile).renameTo(filename)) {
-    A2_LOG_NOTICE(fmt(MSG_SERVER_STAT_SAVED, filename.c_str()));
+    A2_LOG_INFO(fmt(MSG_SERVER_STAT_SAVED, filename.c_str()));
     return true;
   }
   else {
@@ -227,7 +232,7 @@ bool ServerStatMan::load(const std::string& filename)
     sstat->setStatus(m[S_STATUS]);
     add(sstat);
   }
-  A2_LOG_NOTICE(fmt(MSG_SERVER_STAT_LOADED, filename.c_str()));
+  A2_LOG_INFO(fmt(MSG_SERVER_STAT_LOADED, filename.c_str()));
   return true;
 }
 

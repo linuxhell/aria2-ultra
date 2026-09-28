@@ -33,19 +33,27 @@
  */
 /* copyright --> */
 #include "Piece.h"
+#include "Command.h"
+#include <algorithm>
+#include <cinttypes>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <limits>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include <array>
 #include <cassert>
 
-#include "util.h"
-#include "BitfieldMan.h"
-#include "A2STR.h"
-#include "util.h"
 #include "a2functional.h"
+#include "fmt.h"
+#include "message.h"
+#include "DlAbortEx.h"
+#include "BitfieldMan.h"
 #include "WrDiskCache.h"
 #include "WrDiskCacheEntry.h"
-#include "LogFactory.h"
-#include "fmt.h"
 #include "DiskAdaptor.h"
 #include "MessageDigest.h"
 
@@ -216,7 +224,7 @@ bool Piece::isHashCalculated() const { return mdctx_ && nextBegin_ == length_; }
 std::string Piece::getDigest()
 {
   if (!mdctx_) {
-    return A2STR::NIL;
+    return "";
   }
   else {
     std::string hash = mdctx_->digest();
@@ -339,7 +347,6 @@ void Piece::updateWrCache(WrDiskCache* diskCache, unsigned char* data,
     return;
   }
   assert(wrCache_);
-  A2_LOG_DEBUG(fmt("updateWrCache entry=%p", wrCache_.get()));
   auto cell = new WrDiskCacheEntry::DataCell();
   cell->goff = goff;
   cell->data = data;

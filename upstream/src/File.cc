@@ -32,7 +32,23 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 #include "File.h"
+#include "TimeA2.h"
+#include "a2io.h"
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <iterator>
+#include <string>
+#include <sys/stat.h>
+#ifdef _WIN32
+#  include <direct.h>
+#  include <windows.h>
+#endif
 
 #include <stdlib.h>
 #include <sys/types.h>
@@ -45,12 +61,15 @@
 #include <cstring>
 #include <cstdio>
 
-#include "util.h"
-#include "A2STR.h"
-#include "array_fun.h"
-#include "Logger.h"
-#include "LogFactory.h"
+#include "support/Text.h"
+#include "support/FilePath.h"
+#include "platform/Process.h"
+#include "platform/NativeText.h"
+#include "a2functional.h"
 #include "fmt.h"
+#include "message.h"
+#include "array_fun.h"
+#include "Log.h"
 
 namespace aria2 {
 
@@ -200,7 +219,7 @@ bool File::mkdirs()
       for (; i != eoi && *i != '/'; ++i)
         ;
       dbegin = i;
-      A2_LOG_DEBUG(
+      A2_LOG_TRACE(
           fmt("UNC Prefix %s", std::string(path.begin(), dbegin).c_str()));
     }
   }
@@ -231,15 +250,14 @@ bool File::mkdirs()
     }
 #endif // __MINGW32__
     std::string dir(begin, j);
-    A2_LOG_DEBUG(fmt("Making directory %s", dir.c_str()));
     if (File(dir).isDir()) {
-      A2_LOG_DEBUG(fmt("%s exists and is a directory.", dir.c_str()));
       continue;
     }
     if (a2mkdir(utf8ToWChar(dir).c_str(), DIR_OPEN_MODE) == -1) {
-      A2_LOG_DEBUG(fmt("Failed to create %s", dir.c_str()));
+      A2_LOG_DEBUG(fmt("Failed to create directory %s", dir.c_str()));
       return false;
     }
+    A2_LOG_TRACE(fmt("Created directory %s", dir.c_str()));
   }
   return true;
 } // namespace aria2
@@ -271,7 +289,7 @@ std::string File::getDirname() const
       name_.find_last_of(getPathSeparators());
   if (lastSlashIndex == std::string::npos) {
     if (name_.empty()) {
-      return A2STR::NIL;
+      return "";
     }
     else {
       return ".";

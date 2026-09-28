@@ -36,14 +36,9 @@
 #define D_DH_KEY_EXCHANGE_H
 
 #include "common.h"
-#ifdef USE_INTERNAL_BIGNUM
-#  include "InternalDHKeyExchange.h"
-#elif HAVE_LIBGMP
-#  include "LibgmpDHKeyExchange.h"
-#elif HAVE_LIBGCRYPT
-#  include "LibgcryptDHKeyExchange.h"
-#elif HAVE_OPENSSL
-#  include "LibsslDHKeyExchange.h"
-#endif // HAVE_OPENSSL
+#include "LibsslDHKeyExchange.h"
+namespace aria2 {
+using DHKeyExchange = LibsslDHKeyExchange;
+}
 
 #endif // D_DH_KEY_EXCHANGE_H

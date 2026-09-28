@@ -33,14 +33,14 @@
  */
 /* copyright --> */
 #include "IOFile.h"
+#include <string>
 
 #include <array>
 #include <cstring>
 #include <cstdarg>
 #include <ostream>
 
-#include "a2io.h"
-#include "util.h"
+#include "a2functional.h"
 
 namespace aria2 {
 
@@ -70,7 +70,7 @@ char* IOFile::getsn(char* s, int size)
   char* ptr = gets(s, size);
   if (ptr) {
     int len = strlen(ptr);
-    if (ptr[len - 1] == '\n') {
+    if (len > 0 && ptr[len - 1] == '\n') {
       ptr[len - 1] = '\0';
     }
   }
@@ -87,12 +87,15 @@ std::string IOFile::getLine()
   while (gets(buf.data(), buf.size())) {
     size_t len = strlen(buf.data());
     bool lineBreak = false;
-    if (buf[len - 1] == '\n') {
+    if (len > 0 && buf[len - 1] == '\n') {
       --len;
       lineBreak = true;
     }
     res.append(buf.data(), len);
     if (lineBreak) {
+      if (!res.empty() && res.back() == '\r') {
+        res.pop_back();
+      }
       break;
     }
   }
@@ -105,6 +108,10 @@ bool IOFile::eof() { return !isOpen() || isEOF(); }
 
 size_t IOFile::transfer(std::ostream& out)
 {
+  if (!*this) {
+    return 0;
+  }
+
   size_t count = 0;
   std::array<char, 4_k> buf;
   while (1) {

@@ -33,10 +33,13 @@
  */
 /* copyright --> */
 #include "TimedHaltCommand.h"
+#include "Command.h"
+#include "TimeBasedCommand.h"
+#include <chrono>
+#include <utility>
 #include "DownloadEngine.h"
 #include "RequestGroupMan.h"
-#include "Logger.h"
-#include "LogFactory.h"
+#include "Log.h"
 #include "message.h"
 #include "fmt.h"
 
@@ -63,7 +66,7 @@ void TimedHaltCommand::preProcess()
 void TimedHaltCommand::process()
 {
   if (!getDownloadEngine()->isHaltRequested()) {
-    A2_LOG_NOTICE(
+    A2_LOG_INFO(
         fmt(MSG_TIME_HAS_PASSED, static_cast<long int>(getInterval().count())));
     if (forceHalt_) {
       getDownloadEngine()->requestForceHalt();

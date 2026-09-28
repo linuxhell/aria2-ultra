@@ -58,8 +58,8 @@ size_t countOption();
 // Returns Pref whose ID is id. id must be less than countOption().
 PrefPtr i2p(size_t id);
 
-// Returns Pref whose keyword is k. If no such Pref is found, returns
-// special null Pref whose ID is 0.
+// Resolves an option name. If no match is found, returns the special null
+// Pref whose ID is 0.
 PrefPtr k2p(const std::string& k);
 
 // Deletes resources allocated for preferences. Call this function at
@@ -83,30 +83,25 @@ extern const std::string A2_V_GEOM;
 extern const std::string V_PREALLOC;
 extern const std::string V_FALLOC;
 extern const std::string V_TRUNC;
+extern const std::string V_TRACE;
 extern const std::string V_DEBUG;
 extern const std::string V_INFO;
-extern const std::string V_NOTICE;
 extern const std::string V_WARN;
 extern const std::string V_ERROR;
 extern const std::string V_INORDER;
 extern const std::string A2_V_RANDOM;
-extern const std::string V_FEEDBACK;
-extern const std::string V_ADAPTIVE;
-extern const std::string V_LIBUV;
 extern const std::string V_EPOLL;
 extern const std::string V_KQUEUE;
-extern const std::string V_PORT;
 extern const std::string V_POLL;
 extern const std::string V_SELECT;
-extern const std::string V_BINARY;
-extern const std::string V_ASCII;
-extern const std::string V_GET;
-extern const std::string V_TUNNEL;
-extern const std::string V_PLAIN;
-extern const std::string V_ARC4;
 extern const std::string V_HTTP;
 extern const std::string V_HTTPS;
-extern const std::string V_FTP;
+extern const std::string V_PREFERRED;
+extern const std::string V_DISABLED;
+extern const std::string V_REQUIRED;
+extern const std::string V_TCP;
+extern const std::string V_UTP;
+extern const std::string V_BOTH;
 extern const std::string A2_V_TLS11;
 extern const std::string A2_V_TLS12;
 extern const std::string A2_V_TLS13;
@@ -126,15 +121,20 @@ extern PrefPtr PREF_CONNECT_TIMEOUT;
 // values: 1*digit
 extern PrefPtr PREF_MAX_TRIES;
 // values: 1*digit
-extern PrefPtr PREF_AUTO_SAVE_INTERVAL;
+extern PrefPtr PREF_STATE_SAVE_INTERVAL;
 // values: a string that your file system recognizes as a file name.
 extern PrefPtr PREF_LOG;
+// values: 1*digit
+extern PrefPtr PREF_LOG_MAX_SIZE;
+// values: 1*digit
+extern PrefPtr PREF_LOG_MAX_FILES;
 // values: a string that your file system recognizes as a directory.
 extern PrefPtr PREF_DIR;
 // values: a string that your file system recognizes as a file name.
 extern PrefPtr PREF_OUT;
+extern PrefPtr PREF_FILENAME_HINT;
+extern PrefPtr PREF_FILENAME_HINT_SOURCE;
 // values: 1*digit
-extern PrefPtr PREF_SPLIT;
 // value: true | false
 extern PrefPtr PREF_DAEMON;
 // value: a string
@@ -146,7 +146,6 @@ extern PrefPtr PREF_PIECE_LENGTH;
 // value: 1*digit
 extern PrefPtr PREF_MAX_DOWNLOAD_LIMIT;
 // value: 1*digit
-extern PrefPtr PREF_STARTUP_IDLE_TIME;
 // value: prealloc | falloc | none
 extern PrefPtr PREF_FILE_ALLOCATION;
 // value: 1*digit
@@ -186,7 +185,6 @@ extern PrefPtr PREF_AUTO_FILE_RENAMING;
 // value: true | false
 extern PrefPtr PREF_PARAMETERIZED_URI;
 // value: true | false
-extern PrefPtr PREF_ALLOW_PIECE_LENGTH_CHANGE;
 // value: true | false
 extern PrefPtr PREF_NO_CONF;
 // value: string
@@ -195,22 +193,12 @@ extern PrefPtr PREF_CONF_PATH;
 extern PrefPtr PREF_STOP;
 // value: true | false
 extern PrefPtr PREF_QUIET;
-// value: true | false
-extern PrefPtr PREF_ASYNC_DNS;
 // value: 1*digit
 extern PrefPtr PREF_SUMMARY_INTERVAL;
-// value: debug, info, notice, warn, error
+// value: trace, debug, info, warn, error
 extern PrefPtr PREF_LOG_LEVEL;
-// value: debug, info, notice, warn, error
+// value: trace, debug, info, warn, error
 extern PrefPtr PREF_CONSOLE_LOG_LEVEL;
-// value: inorder | feedback | adaptive
-extern PrefPtr PREF_URI_SELECTOR;
-// value: 1*digit
-extern PrefPtr PREF_SERVER_STAT_TIMEOUT;
-// value: string that your file system recognizes as a file name.
-extern PrefPtr PREF_SERVER_STAT_IF;
-// value: string that your file system recognizes as a file name.
-extern PrefPtr PREF_SERVER_STAT_OF;
 // value: true | false
 extern PrefPtr PREF_REMOTE_TIME;
 // value: 1*digit
@@ -222,9 +210,6 @@ extern PrefPtr PREF_ENABLE_RPC;
 // value: 1*digit
 extern PrefPtr PREF_RPC_LISTEN_PORT;
 // value: string
-extern PrefPtr PREF_RPC_USER;
-// value: string
-extern PrefPtr PREF_RPC_PASSWD;
 // value: 1*digit
 extern PrefPtr PREF_RPC_MAX_REQUEST_SIZE;
 // value: true | false
@@ -241,8 +226,6 @@ extern PrefPtr PREF_RPC_SECURE;
 extern PrefPtr PREF_RPC_SAVE_UPLOAD_METADATA;
 // value: true | false
 extern PrefPtr PREF_DRY_RUN;
-// value: true | false
-extern PrefPtr PREF_REUSE_URI;
 // value: string
 extern PrefPtr PREF_ON_DOWNLOAD_START;
 extern PrefPtr PREF_ON_DOWNLOAD_PAUSE;
@@ -258,33 +241,34 @@ extern PrefPtr PREF_DISABLE_IPV6;
 // value: true | false
 extern PrefPtr PREF_HUMAN_READABLE;
 // value: true | false
-extern PrefPtr PREF_REMOVE_CONTROL_FILE;
-// value: true | false
-extern PrefPtr PREF_ALWAYS_RESUME;
-// value: 1*digit
-extern PrefPtr PREF_MAX_RESUME_FAILURE_TRIES;
 // value: string that your file system recognizes as a file name.
 extern PrefPtr PREF_SAVE_SESSION;
 // value: 1*digit
-extern PrefPtr PREF_MAX_CONNECTION_PER_SERVER;
 // value: 1*digit
-extern PrefPtr PREF_MIN_SPLIT_SIZE;
+extern PrefPtr PREF_ED2K_MIN_SPLIT_SIZE;
 // value: true | false
-extern PrefPtr PREF_CONDITIONAL_GET;
 // value: true | false
-extern PrefPtr PREF_SELECT_LEAST_USED_HOST;
-// value: true | false
-extern PrefPtr PREF_ENABLE_ASYNC_DNS6;
 // value: 1*digit
 extern PrefPtr PREF_MAX_DOWNLOAD_RESULT;
 // value: 1*digit
 extern PrefPtr PREF_RETRY_WAIT;
-// value: string
-extern PrefPtr PREF_ASYNC_DNS_SERVER;
+extern PrefPtr PREF_STREAM_MAX_CONNECTIONS;
+extern PrefPtr PREF_STREAM_MAX_RANGE_SIZE;
+extern PrefPtr PREF_MEDIA;
+extern PrefPtr PREF_MEDIA_FORMAT;
+extern PrefPtr PREF_MEDIA_VIDEO;
+extern PrefPtr PREF_MEDIA_AUDIO;
+extern PrefPtr PREF_MEDIA_SUBTITLES;
+extern PrefPtr PREF_MEDIA_PAUSE_AFTER_PROBE;
+extern PrefPtr PREF_MEDIA_RECORD_TIME;
+extern PrefPtr PREF_MEDIA_REQUEST_CONTEXTS;
+extern PrefPtr PREF_MEDIA_INPUT;
+extern PrefPtr PREF_MEDIA_START_TIME;
+extern PrefPtr PREF_MEDIA_END_TIME;
 // value: true | false
 extern PrefPtr PREF_SHOW_CONSOLE_READOUT;
 // value: default | inorder | geom
-extern PrefPtr PREF_STREAM_PIECE_SELECTOR;
+extern PrefPtr PREF_ED2K_PIECE_SELECTOR;
 // value: true | false
 extern PrefPtr PREF_TRUNCATE_CONSOLE_READOUT;
 // value: true | false
@@ -305,6 +289,24 @@ extern PrefPtr PREF_FORCE_SAVE;
 extern PrefPtr PREF_SAVE_NOT_FOUND;
 // value: 1*digit
 extern PrefPtr PREF_DISK_CACHE;
+// value: path to persistent application state directory
+extern PrefPtr PREF_STATE_DIR;
+// value: host:port[,host:port]
+extern PrefPtr PREF_ED2K_SERVER;
+// value: path to server.met
+extern PrefPtr PREF_ED2K_SERVER_LIST;
+// value: path to nodes.dat
+extern PrefPtr PREF_ED2K_NODE_LIST;
+// value: 0-65535
+extern PrefPtr PREF_ED2K_LISTEN_PORT;
+// value: 0-65535
+extern PrefPtr PREF_ED2K_UDP_LISTEN_PORT;
+// value: 1*digit
+extern PrefPtr PREF_ED2K_UPLOAD_SLOTS;
+
+extern PrefPtr PREF_ED2K_MAX_CONNECTIONS;
+// value: true | false
+extern PrefPtr PREF_ED2K_PREVIEW_PRIORITY;
 // value: string
 extern PrefPtr PREF_GID;
 // values: 1*digit
@@ -330,19 +332,9 @@ extern PrefPtr PREF_STDERR;
 // value: true | false
 extern PrefPtr PREF_KEEP_UNFINISHED_DOWNLOAD_RESULT;
 
-/**
- * FTP related preferences
- */
-extern PrefPtr PREF_FTP_USER;
-extern PrefPtr PREF_FTP_PASSWD;
-// values: binary | ascii
-extern PrefPtr PREF_FTP_TYPE;
-// values: true | false
-extern PrefPtr PREF_FTP_PASV;
-// values: true | false
-extern PrefPtr PREF_FTP_REUSE_CONNECTION;
-// values: hashType=digest
-extern PrefPtr PREF_SSH_HOST_KEY_MD;
+extern PrefPtr PREF_SFTP_USER;
+extern PrefPtr PREF_SFTP_PASSWD;
+extern PrefPtr PREF_SSH_HOST_KEY_SHA256;
 
 /**
  * HTTP related preferences
@@ -358,9 +350,6 @@ extern PrefPtr PREF_SAVE_COOKIES;
 // values: true | false
 extern PrefPtr PREF_ENABLE_HTTP_KEEP_ALIVE;
 // values: true | false
-extern PrefPtr PREF_ENABLE_HTTP_PIPELINING;
-// value: 1*digit
-extern PrefPtr PREF_MAX_HTTP_PIPELINING;
 // value: string
 extern PrefPtr PREF_HEADER;
 // value: string that your file system recognizes as a file name.
@@ -372,47 +361,30 @@ extern PrefPtr PREF_CA_CERTIFICATE;
 // value: true | false
 extern PrefPtr PREF_CHECK_CERTIFICATE;
 // value: true | false
-extern PrefPtr PREF_USE_HEAD;
-// value: true | false
-extern PrefPtr PREF_HTTP_AUTH_CHALLENGE;
 // value: true | false
 extern PrefPtr PREF_HTTP_NO_CACHE;
 // value: true | false
 extern PrefPtr PREF_HTTP_ACCEPT_GZIP;
 // value: true | false
-extern PrefPtr PREF_CONTENT_DISPOSITION_DEFAULT_UTF8;
-// value: true | false
-extern PrefPtr PREF_NO_WANT_DIGEST_HEADER;
 
 /**;
  * Proxy related preferences
  */
 extern PrefPtr PREF_HTTP_PROXY;
 extern PrefPtr PREF_HTTPS_PROXY;
-extern PrefPtr PREF_FTP_PROXY;
 extern PrefPtr PREF_ALL_PROXY;
 // values: comma separated hostname or domain
 extern PrefPtr PREF_NO_PROXY;
-// values: get | tunnel
-extern PrefPtr PREF_PROXY_METHOD;
 extern PrefPtr PREF_HTTP_PROXY_USER;
 extern PrefPtr PREF_HTTP_PROXY_PASSWD;
 extern PrefPtr PREF_HTTPS_PROXY_USER;
 extern PrefPtr PREF_HTTPS_PROXY_PASSWD;
-extern PrefPtr PREF_FTP_PROXY_USER;
-extern PrefPtr PREF_FTP_PROXY_PASSWD;
 extern PrefPtr PREF_ALL_PROXY_USER;
 extern PrefPtr PREF_ALL_PROXY_PASSWD;
 
 /**
  * BitTorrent related preferences
  */
-// values: 1*digit
-extern PrefPtr PREF_PEER_CONNECTION_TIMEOUT;
-// values: 1*digit
-extern PrefPtr PREF_BT_TIMEOUT;
-// values: 1*digit
-extern PrefPtr PREF_BT_REQUEST_TIMEOUT;
 // values: true | false
 extern PrefPtr PREF_SHOW_FILES;
 // values: 1*digit
@@ -431,94 +403,126 @@ extern PrefPtr PREF_SELECT_FILE;
 extern PrefPtr PREF_SEED_TIME;
 // values: 1*digit ['.' [ 1*digit ] ]
 extern PrefPtr PREF_SEED_RATIO;
-// values: 1*digit
-extern PrefPtr PREF_BT_KEEP_ALIVE_INTERVAL;
-// values: a string, less than or equals to 20 bytes length
-extern PrefPtr PREF_PEER_ID_PREFIX;
-// values: a string representing the extended BT handshake peer user agent
-extern PrefPtr PREF_PEER_AGENT;
 // values: true | false
 extern PrefPtr PREF_ENABLE_PEER_EXCHANGE;
 // values: true | false
 extern PrefPtr PREF_ENABLE_DHT;
-// values: a string
-extern PrefPtr PREF_DHT_LISTEN_ADDR;
+// values: enabled | required | disabled
+extern PrefPtr PREF_BT_ENCRYPTION;
+// values: tcp | utp | both
+extern PrefPtr PREF_BT_TRANSPORT;
+// values: HOST:PORT[,HOST:PORT...]
+extern PrefPtr PREF_BT_DHT_BOOTSTRAP_NODES;
 // values: 1*digit
-extern PrefPtr PREF_DHT_LISTEN_PORT;
-// values: a string
-extern PrefPtr PREF_DHT_ENTRY_POINT_HOST;
+extern PrefPtr PREF_BT_MAX_CONNECTIONS;
 // values: 1*digit
-extern PrefPtr PREF_DHT_ENTRY_POINT_PORT;
-// values: a string (hostname:port)
-extern PrefPtr PREF_DHT_ENTRY_POINT;
-// values: a string
-extern PrefPtr PREF_DHT_FILE_PATH;
+extern PrefPtr PREF_BT_MAX_UPLOADS;
+// values: HTTP, SOCKS4, or SOCKS5 URI
+extern PrefPtr PREF_BT_PROXY;
 // values: true | false
-extern PrefPtr PREF_ENABLE_DHT6;
-// values: a string
-extern PrefPtr PREF_DHT_LISTEN_ADDR6;
-// values: a string
-extern PrefPtr PREF_DHT_ENTRY_POINT_HOST6;
-// values: 1*digit
-extern PrefPtr PREF_DHT_ENTRY_POINT_PORT6;
-// values: a string (hostname:port)
-extern PrefPtr PREF_DHT_ENTRY_POINT6;
-// values: a string
-extern PrefPtr PREF_DHT_FILE_PATH6;
-// values: plain | arc4
-extern PrefPtr PREF_BT_MIN_CRYPTO_LEVEL;
-// values:: true | false
-extern PrefPtr PREF_BT_REQUIRE_CRYPTO;
-// values: 1*digit
-extern PrefPtr PREF_BT_REQUEST_PEER_SPEED_LIMIT;
+extern PrefPtr PREF_BT_PORT_MAPPING;
 // values: 1*digit
 extern PrefPtr PREF_BT_MAX_OPEN_FILES;
+// values: 1*digit
+extern PrefPtr PREF_BT_IO_THREADS;
+// values: 1*digit
+extern PrefPtr PREF_BT_HASHING_THREADS;
+// values: 1*digit
+extern PrefPtr PREF_BT_CONNECTION_SPEED;
+// values: 1*digit
+extern PrefPtr PREF_BT_MAX_OUT_REQUEST_QUEUE;
+// values: 1*digit
+extern PrefPtr PREF_BT_MAX_IN_REQUEST_QUEUE;
+// values: 1*digit
+extern PrefPtr PREF_BT_DISK_QUEUE_SIZE;
+// values: default | pread | mmap | posix
+extern PrefPtr PREF_BT_DISK_IO;
+// values: enabled | disabled
+extern PrefPtr PREF_BT_DISK_READ_CACHE;
+// values: enabled | disabled | write-through
+extern PrefPtr PREF_BT_DISK_WRITE_CACHE;
+// values: 1*digit
+extern PrefPtr PREF_BT_CHECKING_MEMORY;
+// values: true | false
+extern PrefPtr PREF_BT_PIECE_EXTENT_AFFINITY;
+// values: 1*digit
+extern PrefPtr PREF_BT_PEER_TURNOVER;
+// values: 1*digit
+extern PrefPtr PREF_BT_PEER_TURNOVER_CUTOFF;
+// values: 1*digit
+extern PrefPtr PREF_BT_PEER_TURNOVER_INTERVAL;
+// values: prefer-tcp | peer-proportional
+extern PrefPtr PREF_BT_MIXED_MODE;
+// values: fixed | rate-based
+extern PrefPtr PREF_BT_UPLOAD_SLOT_ALGORITHM;
+// values: round-robin | fastest-upload | anti-leech
+extern PrefPtr PREF_BT_SEED_CHOKING_ALGORITHM;
+// values: 1*digit
+extern PrefPtr PREF_BT_SEND_BUFFER_LOW_WATERMARK;
+// values: 1*digit
+extern PrefPtr PREF_BT_SEND_BUFFER_WATERMARK;
+// values: 1*digit
+extern PrefPtr PREF_BT_SEND_BUFFER_WATERMARK_FACTOR;
+// values: true | false
+extern PrefPtr PREF_BT_SEEDING_OUTGOING_CONNECTIONS;
+// values: true | false
+extern PrefPtr PREF_BT_RATE_LIMIT_OVERHEAD;
+// values: 1*digit
+extern PrefPtr PREF_BT_STOP_TRACKER_TIMEOUT;
+// values: peers | peers-and-trackers | all
+extern PrefPtr PREF_BT_BLOCKLIST_SCOPE;
+// values: 1*digit
+extern PrefPtr PREF_BT_RESUME_SAVE_INTERVAL;
+// values: true | false
+extern PrefPtr PREF_BT_UPLOAD_SUGGESTIONS;
+// values: INDEX=off|normal|high|top[,INDEX=...]
+extern PrefPtr PREF_BT_FILE_PRIORITY;
+// values: 1*digit
+extern PrefPtr PREF_BT_MAX_CONCURRENT_HTTP_ANNOUNCES;
+// values: true | false
+extern PrefPtr PREF_BT_ANNOUNCE_ALL_TIERS;
+// values: true | false
+extern PrefPtr PREF_BT_ANNOUNCE_ALL_TRACKERS;
+// values: string
+extern PrefPtr PREF_BT_USER_AGENT;
+// values: string, 0 to 20 bytes
+extern PrefPtr PREF_BT_PEER_ID_PREFIX;
+// values: true | false
+extern PrefPtr PREF_BT_ANONYMOUS_MODE;
 // values: true | false
 extern PrefPtr PREF_BT_SEED_UNVERIFIED;
-// values: true | false
-extern PrefPtr PREF_BT_HASH_CHECK_SEED;
 // values: 1*digit
 extern PrefPtr PREF_BT_MAX_PEERS;
+// values: 1*digit
+extern PrefPtr PREF_BT_MAX_UPLOADS_PER_TORRENT;
+// values: true | false
+extern PrefPtr PREF_BT_FIRST_LAST_PIECE_FIRST;
+// values: true | false
+extern PrefPtr PREF_BT_SUPER_SEEDING;
+// values: a string (file path)
+extern PrefPtr PREF_BT_PEER_BLOCKLIST;
 // values: a string (IP address)
 extern PrefPtr PREF_BT_EXTERNAL_IP;
+// values: 1*digit
+extern PrefPtr PREF_BT_EXTERNAL_PORT;
 // values: 1*digit '=' a string that your file system recognizes as a file name.
 extern PrefPtr PREF_INDEX_OUT;
-// values: 1*digit
-extern PrefPtr PREF_BT_TRACKER_INTERVAL;
-// values: 1*digit
-extern PrefPtr PREF_BT_STOP_TIMEOUT;
-// values: head[=SIZE]|tail[=SIZE], ...
-extern PrefPtr PREF_BT_PRIORITIZE_PIECE;
-// values: true | false
-extern PrefPtr PREF_BT_SAVE_METADATA;
-// values: true | false
-extern PrefPtr PREF_BT_METADATA_ONLY;
 // values: true | false
 extern PrefPtr PREF_BT_ENABLE_LPD;
-// values: string
-extern PrefPtr PREF_BT_LPD_INTERFACE;
 // values: 1*digit
-extern PrefPtr PREF_BT_TRACKER_TIMEOUT;
+extern PrefPtr PREF_BT_TRACKER_COMPLETION_TIMEOUT;
 // values: 1*digit
-extern PrefPtr PREF_BT_TRACKER_CONNECT_TIMEOUT;
-// values: 1*digit
-extern PrefPtr PREF_DHT_MESSAGE_TIMEOUT;
+extern PrefPtr PREF_BT_TRACKER_RECEIVE_TIMEOUT;
+// values: interface name or numeric IP address list
+extern PrefPtr PREF_BT_INTERFACE;
 // values: string
 extern PrefPtr PREF_ON_BT_DOWNLOAD_COMPLETE;
 // values: string
 extern PrefPtr PREF_BT_TRACKER;
 // values: string
 extern PrefPtr PREF_BT_EXCLUDE_TRACKER;
-// values: true | false
-extern PrefPtr PREF_BT_REMOVE_UNSELECTED_FILE;
 // values: true |false
-extern PrefPtr PREF_BT_DETACH_SEED_ONLY;
-// values: true | false
-extern PrefPtr PREF_BT_FORCE_ENCRYPTION;
-// values: true | false
-extern PrefPtr PREF_BT_ENABLE_HOOK_AFTER_HASH_CHECK;
-// values: true | false
-extern PrefPtr PREF_BT_LOAD_SAVED_METADATA;
+extern PrefPtr PREF_DETACH_SHARE_ONLY;
 
 /**
  * Metalink related preferences
@@ -535,7 +539,7 @@ extern PrefPtr PREF_METALINK_OS;
 extern PrefPtr PREF_METALINK_LOCATION;
 // values: true | false | mem
 extern PrefPtr PREF_FOLLOW_METALINK;
-// values: http | https | ftp | none
+// values: http | https | none
 extern PrefPtr PREF_METALINK_PREFERRED_PROTOCOL;
 // values: true | false
 extern PrefPtr PREF_METALINK_ENABLE_UNIQUE_PROTOCOL;

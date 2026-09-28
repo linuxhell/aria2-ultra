@@ -1,0 +1,184 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  echo "Usage: $0 <platform> <binary>" >&2
+  echo "Platforms: linux, macos, windows-x86_64, windows-arm64, android-arm64" >&2
+  exit 2
+}
+
+test $# -eq 2 || usage
+
+platform=$1
+binary=$2
+
+if [ ! -f "$binary" ]; then
+  echo "Runtime dependency check failed: binary not found: $binary" >&2
+  exit 1
+fi
+
+tmp=${TMPDIR:-/tmp}/aria2-runtime-deps.$$
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+
+fail_unexpected() {
+  dep=$1
+  echo "Unexpected runtime dependency for $platform: $dep" >&2
+  exit 1
+}
+
+check_build_paths() {
+  command -v strings >/dev/null 2>&1 || {
+    echo "Runtime dependency check failed: strings is required" >&2
+    exit 1
+  }
+  workspace=${GITHUB_WORKSPACE:-$PWD}
+  if strings "$binary" | grep -F "$workspace" > "$tmp"; then
+    echo "Build runner path leaked into $platform artifact:" >&2
+    cat "$tmp" >&2
+    exit 1
+  fi
+}
+
+check_windows() {
+  objdump=${OBJDUMP:-objdump}
+  command -v "$objdump" >/dev/null 2>&1 || {
+    echo "Runtime dependency check failed: $objdump is required for Windows binaries" >&2
+    exit 1
+  }
+
+  "$objdump" -p "$binary" |
+    awk '/^[[:space:]]*DLL Name:/ {
+      sub(/^[[:space:]]*DLL Name:[[:space:]]*/, "")
+      print
+    }' |
+    sort -fu > "$tmp"
+
+  while IFS= read -r dep; do
+    dep_lc=$(printf '%s\n' "$dep" | tr '[:upper:]' '[:lower:]')
+    case "$dep_lc" in
+      libcrypto*.dll|libssl*.dll|openssl*.dll)
+        fail_unexpected "$dep"
+        ;;
+      api-ms-win-*.dll|advapi32.dll|bcrypt.dll|cfgmgr32.dll|crypt32.dll|dnsapi.dll|gdi32.dll|iphlpapi.dll|kernel32.dll|mswsock.dll|normaliz.dll|ntdll.dll|ole32.dll|oleaut32.dll|psapi.dll|rpcrt4.dll|secur32.dll|shell32.dll|shlwapi.dll|ucrtbase.dll|user32.dll|version.dll|winmm.dll|ws2_32.dll|wsock32.dll)
+        ;;
+      *)
+        fail_unexpected "$dep"
+        ;;
+    esac
+  done < "$tmp"
+}
+
+check_elf() {
+  reader=${READELF:-readelf}
+  command -v "$reader" >/dev/null 2>&1 || {
+    echo "Runtime dependency check failed: $reader is required for ELF binaries" >&2
+    exit 1
+  }
+
+  "$reader" -d "$binary" |
+    awk '
+      /\(NEEDED\)/ {
+        dep = $0
+        sub(/^.*\[/, "", dep)
+        sub(/\].*$/, "", dep)
+        print dep
+      }
+    ' |
+    sort -fu > "$tmp"
+
+  if [ "$platform" = linux ]; then
+    if "$reader" -d "$binary" | awk '/\(RPATH\)|\(RUNPATH\)/ { found = 1 } END { exit found ? 0 : 1 }'; then
+      fail_unexpected "ELF rpath/runpath"
+    fi
+
+    while IFS= read -r dep; do
+      case "$dep" in
+        ld-linux-aarch64.so.1|ld-linux-aarch64_be.so.1|ld-linux-x86-64.so.2|libc.so.6|libcrypto.so.3|libdl.so.2|libgcc_s.so.1|libm.so.6|libpthread.so.0|librt.so.1|libssl.so.3|libstdc++.so.6)
+          ;;
+        *)
+          fail_unexpected "$dep"
+          ;;
+      esac
+    done < "$tmp"
+
+    interpreter=$("$reader" -l "$binary" |
+      awk '/Requesting program interpreter:/ {
+        sub(/^.*Requesting program interpreter: /, "")
+        sub(/\].*$/, "")
+        print
+      }')
+    case "$interpreter" in
+      ""|/lib64/ld-linux-x86-64.so.2|/lib/ld-linux-aarch64.so.1|/lib/ld-linux-aarch64_be.so.1)
+        ;;
+      *)
+        fail_unexpected "ELF interpreter $interpreter"
+        ;;
+    esac
+
+    "$reader" --version-info --wide "$binary" > "$tmp"
+    max_glibc=$(sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' "$tmp" | sort -Vu | tail -n 1)
+    if [ -n "$max_glibc" ] &&
+       [ "$(printf '%s\n' "$max_glibc" 2.35 | sort -V | tail -n 1)" != 2.35 ]; then
+      "$reader" --dyn-syms --wide "$binary" | awk '/UND/ && /@GLIBC_/ { print }' >&2
+      fail_unexpected "GLIBC_$max_glibc (maximum supported version is GLIBC_2.35)"
+    fi
+
+    return
+  fi
+
+  while IFS= read -r dep; do
+    case "$platform:$dep" in
+      android-arm64:libc.so|android-arm64:libdl.so|android-arm64:liblog.so|android-arm64:libm.so)
+        ;;
+      *)
+        fail_unexpected "$dep"
+        ;;
+    esac
+  done < "$tmp"
+}
+
+check_macos() {
+  command -v otool >/dev/null 2>&1 || {
+    echo "Runtime dependency check failed: otool is required for macOS binaries" >&2
+    exit 1
+  }
+
+  otool -L "$binary" |
+    awk 'NR > 1 {
+      dep = $1
+      print dep
+    }' |
+    sort -fu > "$tmp"
+
+  while IFS= read -r dep; do
+    case "$dep" in
+      /System/Library/Frameworks/*|/usr/lib/*)
+        ;;
+      *)
+        fail_unexpected "$dep"
+        ;;
+    esac
+  done < "$tmp"
+}
+
+case "$platform" in
+  windows-x86_64|windows-arm64)
+    check_windows
+    ;;
+  linux)
+    check_elf
+    ;;
+  android-arm64)
+    check_elf
+    ;;
+  macos)
+    check_macos
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+check_build_paths
+
+echo "Runtime dependency check passed for $platform: $binary"

@@ -33,13 +33,18 @@
  */
 /* copyright --> */
 #include "MetalinkEntry.h"
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <algorithm>
 
 #include "MetalinkResource.h"
 #include "MetalinkMetaurl.h"
 #include "FileEntry.h"
-#include "util.h"
 #include "a2functional.h"
 #include "Checksum.h"
 #include "ChunkChecksum.h"
@@ -107,11 +112,9 @@ public:
   bool operator()(const std::shared_ptr<MetalinkResource>& res) const
   {
     switch (res->type) {
-    case MetalinkResource::TYPE_FTP:
+    case MetalinkResource::TYPE_SFTP:
     case MetalinkResource::TYPE_HTTP:
-#ifdef ENABLE_SSL
     case MetalinkResource::TYPE_HTTPS:
-#endif // ENABLE_SSL
 #ifdef ENABLE_BITTORRENT
     case MetalinkResource::TYPE_BITTORRENT:
 #endif // ENABLE_BITTORRENT
@@ -129,11 +132,9 @@ void MetalinkEntry::dropUnsupportedResource()
       std::remove_if(std::begin(resources), std::end(resources),
                      [](const std::unique_ptr<MetalinkResource>& res) {
                        switch (res->type) {
-                       case MetalinkResource::TYPE_FTP:
+                       case MetalinkResource::TYPE_SFTP:
                        case MetalinkResource::TYPE_HTTP:
-#ifdef ENABLE_SSL
                        case MetalinkResource::TYPE_HTTPS:
-#endif // ENABLE_SSL
 #ifdef ENABLE_BITTORRENT
                        case MetalinkResource::TYPE_BITTORRENT:
 #endif // ENABLE_BITTORRENT

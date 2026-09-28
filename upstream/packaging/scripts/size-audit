@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+platform=${1:-}
+binary=${2:-}
+
+if [ -z "$platform" ] || [ -z "$binary" ]; then
+  echo "Usage: $0 <platform> <binary>" >&2
+  exit 2
+fi
+
+if [ ! -f "$binary" ]; then
+  echo "Size audit failed: binary not found: $binary" >&2
+  exit 1
+fi
+
+echo "Release size audit for $platform: $binary"
+ls -lh "$binary"
+
+case "$platform" in
+  macos)
+    size -m "$binary" || true
+    otool -L "$binary" || true
+    ;;
+  windows-*)
+    if command -v "${OBJDUMP:-objdump}" >/dev/null 2>&1; then
+      "${OBJDUMP:-objdump}" -p "$binary" | awk '/^[[:space:]]*DLL Name:/ { print }'
+    fi
+    if command -v "${SIZE:-size}" >/dev/null 2>&1; then
+      "${SIZE:-size}" "$binary" || true
+    fi
+    ;;
+  linux|android-arm64)
+    if command -v "${READELF:-readelf}" >/dev/null 2>&1; then
+      "${READELF:-readelf}" -d "$binary" || true
+    fi
+    if command -v "${SIZE:-size}" >/dev/null 2>&1; then
+      "${SIZE:-size}" "$binary" || true
+    fi
+    ;;
+  *)
+    if command -v size >/dev/null 2>&1; then
+      size "$binary" || true
+    fi
+    ;;
+esac

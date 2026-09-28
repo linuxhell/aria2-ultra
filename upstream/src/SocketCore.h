@@ -45,7 +45,6 @@
 
 #include "a2netcompat.h"
 #include "a2io.h"
-#include "a2netcompat.h"
 #include "a2time.h"
 
 namespace aria2 {
@@ -55,10 +54,9 @@ class TLSContext;
 class TLSSession;
 #endif // ENABLE_SSL
 
-#ifdef HAVE_LIBSSH2
-class SSHSession;
-#endif // HAVE_LIBSSH2
-
+// Owns one socket descriptor and its optional server TLS session. Event-loop
+// commands borrow this object through shared ownership; copying a descriptor
+// owner would close the same native resource twice.
 class SocketCore {
   friend bool operator==(const SocketCore& s1, const SocketCore& s2);
   friend bool operator!=(const SocketCore& s1, const SocketCore& s2);
@@ -80,15 +78,13 @@ private:
   static int socketRecvBufferSize_;
 
   bool blocking_;
-  int secure_;
+  enum class TlsState { None, Handshaking, Connected };
+  TlsState secure_;
 
   bool wantRead_;
   bool wantWrite_;
 
-#if ENABLE_SSL
-  // TLS context for client side
-  static std::shared_ptr<TLSContext> clTlsContext_;
-  // TLS context for server side
+#ifdef ENABLE_SSL
   static std::shared_ptr<TLSContext> svTlsContext_;
 
   std::shared_ptr<TLSSession> tlsSession_;
@@ -97,16 +93,9 @@ private:
    * Makes this socket secure. The connection must be established
    * before calling this method.
    *
-   * If you are going to verify peer's certificate, hostname must be supplied.
    */
-  bool tlsHandshake(TLSContext* tlsctx, const std::string& hostname);
+  bool tlsHandshake();
 #endif // ENABLE_SSL
-
-#ifdef HAVE_LIBSSH2
-  std::unique_ptr<SSHSession> sshSession_;
-
-  void sshCheckDirection();
-#endif // HAVE_LIBSSH2
 
   void init();
 
@@ -117,11 +106,13 @@ private:
 public:
   SocketCore(int sockType = SOCK_STREAM);
 
-  // Formally, private constructor, but made public to use with
-  // std::make_shared.
+  // Takes ownership of an already-open descriptor.
   SocketCore(sock_t sockfd, int sockType);
 
   ~SocketCore();
+
+  SocketCore(const SocketCore&) = delete;
+  SocketCore& operator=(const SocketCore&) = delete;
 
   sock_t getSockfd() const { return sockfd_; }
 
@@ -152,7 +143,7 @@ public:
   void bindWithFamily(uint16_t port, int family, int flags = AI_PASSIVE);
 
   /**
-   * Creates a socket and bind it with locahost's address and port.
+   * Creates a socket and bind it with localhost's address and port.
    * flags is set to struct addrinfo's ai_flags.
    * @param port port to listen. If 0 is specified, os automatically
    * choose available port.
@@ -163,7 +154,7 @@ public:
             int flags = AI_PASSIVE);
 
   /**
-   * Listens form connection on it.
+   * Starts accepting connections.
    * Call bind(uint16_t) before calling this function.
    */
   void beginListen();
@@ -183,7 +174,7 @@ public:
 
   /**
    * Returns address family of this socket.
-   * The socket must be connected or bounded to address.
+   * The socket must be connected or bound to address.
    */
   int getAddressFamily() const;
 
@@ -225,8 +216,7 @@ public:
 
   /**
    * Checks whether this socket is available for writing.
-   * @param timeout the amount of time elapsed before the checking are timed
-   * out.
+   * @param timeout maximum wait in seconds
    * @return true if the socket is available for writing,
    * otherwise returns false.
    */
@@ -234,8 +224,7 @@ public:
 
   /**
    * Checks whether this socket is available for reading.
-   * @param timeout the amount of time elapsed before the checking are timed
-   * out.
+   * @param timeout maximum wait in seconds
    * @return true if the socket is available for reading,
    * otherwise returns false.
    */
@@ -282,7 +271,7 @@ public:
    */
   void readData(void* data, size_t& len);
 
-  // sender.addr will be numerihost assigned.
+  // On success, sender.addr contains the numeric source address.
   ssize_t readDataFrom(void* data, size_t len, Endpoint& sender);
 
 #ifdef ENABLE_SSL
@@ -290,31 +279,7 @@ public:
   // returns true. If handshake has not been done yet, returns false.
   bool tlsAccept();
 
-  // Performs TLS client side handshake. If handshake is completed,
-  // returns true. If handshake has not been done yet, returns false.
-  //
-  // If you are going to verify peer's certificate, hostname must be
-  // supplied.
-  bool tlsConnect(const std::string& hostname);
 #endif // ENABLE_SSL
-
-#ifdef HAVE_LIBSSH2
-  // Performs SSH handshake
-  bool sshHandshake(const std::string& hashType, const std::string& digest);
-  // Performs SSH authentication using username and password.
-  bool sshAuthPassword(const std::string& user, const std::string& password);
-  // Starts sftp session and open remote file |path|.
-  bool sshSFTPOpen(const std::string& path);
-  // Closes sftp remote file gracefully
-  bool sshSFTPClose();
-  // Gets total length and modified time for remote file currently
-  // opened.  |path| is used for logging.
-  bool sshSFTPStat(int64_t& totalLength, time_t& mtime,
-                   const std::string& path);
-  // Seeks file position to |pos|.
-  void sshSFTPSeek(int64_t pos);
-  bool sshGracefulShutdown();
-#endif // HAVE_LIBSSH2
 
   bool operator==(const SocketCore& s) { return sockfd_ == s.sockfd_; }
 
@@ -343,8 +308,6 @@ public:
   size_t getRecvBufferedLength() const;
 
 #ifdef ENABLE_SSL
-  static void
-  setClientTLSContext(const std::shared_ptr<TLSContext>& tlsContext);
   static void
   setServerTLSContext(const std::shared_ptr<TLSContext>& tlsContext);
 #endif // ENABLE_SSL
@@ -377,55 +340,6 @@ public:
                                                    int family = AF_UNSPEC,
                                                    int aiFlags = 0);
 };
-
-// Set default ai_flags. hints.ai_flags is initialized with this
-// value.
-void setDefaultAIFlags(int flags);
-
-// Wrapper function for getaddrinfo(). The value
-// flags|DEFAULT_AI_FLAGS is used as ai_flags.  You can override
-// DEFAULT_AI_FLAGS value by calling setDefaultAIFlags() with new
-// flags.
-int callGetaddrinfo(struct addrinfo** resPtr, const char* host,
-                    const char* service, int family, int sockType, int flags,
-                    int protocol);
-
-// Provides functionality of inet_ntop using getnameinfo.  The return
-// value is the exact value of getnameinfo returns. You can get error
-// message using gai_strerror(3).
-int inetNtop(int af, const void* src, char* dst, socklen_t size);
-
-// Provides functionality of inet_pton using getBinAddr.  If af is
-// AF_INET, dst is assumed to be the pointer to struct in_addr.  If af
-// is AF_INET6, dst is assumed to be the pointer to struct in6_addr.
-//
-// This function returns 0 if it succeeds, or -1.
-int inetPton(int af, const char* src, void* dst);
-
-namespace net {
-
-// Stores binary representation of IP address ip which is represented
-// in text.  ip must be numeric IPv4 or IPv6 address. dest must be
-// allocated by caller before the call. For IPv4 address, dest must be
-// at least 4. For IPv6 address, dest must be at least 16. Returns the
-// number of bytes written in dest, that is 4 for IPv4 and 16 for
-// IPv6. Return 0 if error occurred.
-size_t getBinAddr(void* dest, const std::string& ip);
-
-// Verifies hostname against presented identifiers in the certificate.
-// The implementation is based on the procedure described in RFC 6125.
-bool verifyHostname(const std::string& hostname,
-                    const std::vector<std::string>& dnsNames,
-                    const std::vector<std::string>& ipAddrs,
-                    const std::string& commonName);
-// Checks public IP address are configured for each family: IPv4 and
-// IPv6. The result can be obtained using getIpv4AddrConfigured() and
-// getIpv6AddrConfigured() respectively.
-void checkAddrconfig();
-bool getIPv4AddrConfigured();
-bool getIPv6AddrConfigured();
-
-} // namespace net
 
 } // namespace aria2
 

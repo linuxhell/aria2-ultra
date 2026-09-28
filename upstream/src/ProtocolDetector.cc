@@ -33,18 +33,22 @@
  */
 /* copyright --> */
 #include "ProtocolDetector.h"
+#include "uri_split.h"
+#include <string>
 
 #include <cstring>
 #include <iomanip>
 
 #include "Request.h"
 #include "File.h"
-#include "util.h"
+#include "support/Text.h"
+#include "a2functional.h"
 #include "RecoverableException.h"
 #include "uri.h"
 #include "BufferedFile.h"
+#include "ed2k_link.h"
 #ifdef ENABLE_BITTORRENT
-#  include "bittorrent_helper.h"
+#  include "BtDownload.h"
 #endif // ENABLE_BITTORRENT
 
 namespace aria2 {
@@ -55,7 +59,25 @@ ProtocolDetector::~ProtocolDetector() = default;
 
 bool ProtocolDetector::isStreamProtocol(const std::string& uri) const
 {
-  return uri_split(nullptr, uri.c_str()) == 0;
+  uri_split_result us;
+  if (uri_split(&us, uri.c_str()) != 0) {
+    return false;
+  }
+
+  auto protocol = uri::getFieldString(us, USR_SCHEME, uri.c_str());
+  return util::strieq(protocol, "http") || util::strieq(protocol, "https") ||
+         util::strieq(protocol, "sftp");
+}
+
+bool ProtocolDetector::guessEd2kLink(const std::string& uri) const
+{
+  try {
+    ed2k::parseLink(uri);
+    return true;
+  }
+  catch (RecoverableException& e) {
+    return false;
+  }
 }
 
 bool ProtocolDetector::guessTorrentFile(const std::string& uri) const
@@ -79,7 +101,7 @@ bool ProtocolDetector::guessTorrentMagnet(const std::string& uri) const
 {
 #ifdef ENABLE_BITTORRENT
   try {
-    bittorrent::parseMagnet(uri);
+    BtDownload::fromMagnet(uri);
     return true;
   }
   catch (RecoverableException& e) {

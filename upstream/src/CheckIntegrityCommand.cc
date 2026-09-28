@@ -33,17 +33,17 @@
  */
 /* copyright --> */
 #include "CheckIntegrityCommand.h"
+#include "Command.h"
+#include "RealtimeCommand.h"
+#include <memory>
+#include <utility>
+#include <vector>
 #include "CheckIntegrityEntry.h"
 #include "DownloadEngine.h"
 #include "RequestGroup.h"
-#include "Logger.h"
-#include "LogFactory.h"
+#include "Log.h"
 #include "message.h"
-#include "prefs.h"
 #include "DownloadContext.h"
-#include "a2functional.h"
-#include "RecoverableException.h"
-#include "util.h"
 #include "fmt.h"
 
 namespace aria2 {
@@ -68,12 +68,8 @@ bool CheckIntegrityCommand::executeInternal()
   }
   entry_->validateChunk();
   if (entry_->finished()) {
-    // Enable control file saving here. See also
-    // RequestGroup::processCheckIntegrityEntry() to know why this is
-    // needed.
-    getRequestGroup()->enableSaveControlFile();
     if (getRequestGroup()->downloadFinished()) {
-      A2_LOG_NOTICE(
+      A2_LOG_INFO(
           fmt(MSG_VERIFICATION_SUCCESSFUL,
               getRequestGroup()->getDownloadContext()->getBasePath().c_str()));
       std::vector<std::unique_ptr<Command>> commands;
@@ -81,9 +77,11 @@ bool CheckIntegrityCommand::executeInternal()
       getDownloadEngine()->addCommand(std::move(commands));
     }
     else {
-      A2_LOG_ERROR(
-          fmt(MSG_VERIFICATION_FAILED,
-              getRequestGroup()->getDownloadContext()->getBasePath().c_str()));
+      if (entry_->shouldReportIncompleteAsError()) {
+        A2_LOG_ERROR(fmt(
+            MSG_VERIFICATION_FAILED,
+            getRequestGroup()->getDownloadContext()->getBasePath().c_str()));
+      }
       std::vector<std::unique_ptr<Command>> commands;
       entry_->onDownloadIncomplete(commands, getDownloadEngine());
       getDownloadEngine()->addCommand(std::move(commands));
@@ -100,9 +98,6 @@ bool CheckIntegrityCommand::executeInternal()
 bool CheckIntegrityCommand::handleException(Exception& e)
 {
   A2_LOG_ERROR_EX(fmt(MSG_FILE_VALIDATION_FAILURE, getCuid()), e);
-  A2_LOG_ERROR(
-      fmt(MSG_DOWNLOAD_NOT_COMPLETE, getCuid(),
-          getRequestGroup()->getDownloadContext()->getBasePath().c_str()));
   return true;
 }
 

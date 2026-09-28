@@ -33,6 +33,12 @@
  */
 /* copyright --> */
 #include "MultiFileAllocationIterator.h"
+#include "DiskAdaptor.h"
+#include "a2functional.h"
+#include <cinttypes>
+#include <cstdint>
+#include <iterator>
+#include "fmt.h"
 #include "MultiDiskAdaptor.h"
 #include "FileEntry.h"
 #include "AdaptiveFileAllocationIterator.h"
@@ -42,7 +48,7 @@
 #endif // HAVE_SOME_FALLOCATE
 #include "DiskWriter.h"
 #include "DefaultDiskWriterFactory.h"
-#include "LogFactory.h"
+#include "Log.h"
 
 namespace aria2 {
 
@@ -95,11 +101,21 @@ void MultiFileAllocationIterator::allocateChunk()
 
     if ((*entryItr_)->needsFileAllocation() &&
         (*entryItr_)->size() < fileEntry->getLength()) {
-      A2_LOG_INFO(fmt("Allocating file %s: target size=%" PRId64
-                      ", current size=%" PRId64,
-                      (*entryItr_)->getFilePath().c_str(),
-                      fileEntry->getLength(), (*entryItr_)->size()));
+      A2_LOG_DEBUG(fmt("Allocating file %s: target size=%" PRId64
+                       ", current size=%" PRId64,
+                       (*entryItr_)->getFilePath().c_str(),
+                       fileEntry->getLength(), (*entryItr_)->size()));
       switch (diskAdaptor_->getFileAllocationMethod()) {
+      case (DiskAdaptor::FILE_ALLOC_ADAPTIVE):
+#ifdef HAVE_SOME_FALLOCATE
+        fileAllocationIterator_ = make_unique<FallocFileAllocationIterator>(
+            diskWriter_.get(), (*entryItr_)->size(), fileEntry->getLength());
+        break;
+#else  // !HAVE_SOME_FALLOCATE
+        fileAllocationIterator_ = make_unique<AdaptiveFileAllocationIterator>(
+            diskWriter_.get(), (*entryItr_)->size(), fileEntry->getLength());
+        break;
+#endif // !HAVE_SOME_FALLOCATE
 #ifdef HAVE_SOME_FALLOCATE
       case (DiskAdaptor::FILE_ALLOC_FALLOC):
         fileAllocationIterator_ = make_unique<FallocFileAllocationIterator>(

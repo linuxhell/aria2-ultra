@@ -33,6 +33,13 @@
  */
 /* copyright --> */
 #include "SelectEventPoll.h"
+#include "EventPoll.h"
+#include "a2netcompat.h"
+#include "common.h"
+#include <cerrno>
+#include <functional>
+#include <iterator>
+#include <utility>
 
 #ifdef __MINGW32__
 #  include <cassert>
@@ -42,11 +49,10 @@
 #include <numeric>
 
 #include "Command.h"
-#include "LogFactory.h"
-#include "Logger.h"
+#include "Log.h"
 #include "a2functional.h"
 #include "fmt.h"
-#include "util.h"
+#include "platform/Process.h"
 
 namespace aria2 {
 
@@ -121,36 +127,6 @@ int SelectEventPoll::SocketEntry::getEvents()
                          accumulateEvent);
 }
 
-#ifdef ENABLE_ASYNC_DNS
-
-SelectEventPoll::AsyncNameResolverEntry::AsyncNameResolverEntry(
-    const std::shared_ptr<AsyncNameResolver>& nameResolver, Command* command)
-    : nameResolver_(nameResolver), command_(command)
-{
-}
-
-ares_socket_t SelectEventPoll::AsyncNameResolverEntry::getFds(fd_set* rfdsPtr,
-                                                              fd_set* wfdsPtr)
-{
-  return nameResolver_->getFds(rfdsPtr, wfdsPtr);
-}
-
-void SelectEventPoll::AsyncNameResolverEntry::process(fd_set* rfdsPtr,
-                                                      fd_set* wfdsPtr)
-{
-  nameResolver_->process(rfdsPtr, wfdsPtr);
-  switch (nameResolver_->getStatus()) {
-  case AsyncNameResolver::STATUS_SUCCESS:
-  case AsyncNameResolver::STATUS_ERROR:
-    command_->setStatusActive();
-    break;
-  default:
-    break;
-  }
-}
-
-#endif // ENABLE_ASYNC_DNS
-
 SelectEventPoll::SelectEventPoll()
 {
 #ifdef __MINGW32__
@@ -180,18 +156,6 @@ void SelectEventPoll::poll(const struct timeval& tv)
   memcpy(&efds, &wfdset_, sizeof(fd_set));
 #endif // __MINGW32__
 
-#ifdef ENABLE_ASYNC_DNS
-
-  for (auto& i : nameResolverEntries_) {
-    auto& entry = i.second;
-    auto fd = entry.getFds(&rfds, &wfds);
-    // TODO force error if fd == 0
-    if (fdmax_ < fd) {
-      fdmax_ = fd;
-    }
-  }
-
-#endif // ENABLE_ASYNC_DNS
   int retval;
   do {
     struct timeval ttv = tv;
@@ -223,16 +187,10 @@ void SelectEventPoll::poll(const struct timeval& tv)
   }
   else if (retval == -1) {
     int errNum = errno;
-    A2_LOG_INFO(fmt("select error: %s, fdmax: %d",
-                    util::safeStrerror(errNum).c_str(), fdmax_));
+    A2_LOG_DEBUG(fmt("select error: %s, fdmax: %llu",
+                     util::safeStrerror(errNum).c_str(),
+                     static_cast<unsigned long long>(fdmax_)));
   }
-#ifdef ENABLE_ASYNC_DNS
-
-  for (auto& i : nameResolverEntries_) {
-    i.second.process(&rfds, &wfds);
-  }
-
-#endif // ENABLE_ASYNC_DNS
 }
 
 #ifdef __MINGW32__
@@ -308,7 +266,8 @@ bool SelectEventPoll::deleteEvents(sock_t socket, Command* command,
 {
   auto i = socketEntries_.find(socket);
   if (i == std::end(socketEntries_)) {
-    A2_LOG_DEBUG(fmt("Socket %d is not found in SocketEntries.", socket));
+    A2_LOG_TRACE(fmt("Socket %llu is not found in SocketEntries.",
+                     static_cast<unsigned long long>(socket)));
     return false;
   }
 
@@ -320,29 +279,5 @@ bool SelectEventPoll::deleteEvents(sock_t socket, Command* command,
   updateFdSet();
   return true;
 }
-
-#ifdef ENABLE_ASYNC_DNS
-bool SelectEventPoll::addNameResolver(
-    const std::shared_ptr<AsyncNameResolver>& resolver, Command* command)
-{
-  auto key = std::make_pair(resolver.get(), command);
-  auto itr = nameResolverEntries_.lower_bound(key);
-  if (itr != std::end(nameResolverEntries_) && (*itr).first == key) {
-    return false;
-  }
-
-  nameResolverEntries_.insert(
-      itr, std::make_pair(key, AsyncNameResolverEntry(resolver, command)));
-
-  return true;
-}
-
-bool SelectEventPoll::deleteNameResolver(
-    const std::shared_ptr<AsyncNameResolver>& resolver, Command* command)
-{
-  auto key = std::make_pair(resolver.get(), command);
-  return nameResolverEntries_.erase(key) == 1;
-}
-#endif // ENABLE_ASYNC_DNS
 
 } // namespace aria2

@@ -33,13 +33,16 @@
  */
 /* copyright --> */
 #include "GZipEncoder.h"
+#include <cstdint>
+#include <zlib.h>
 
 #include <array>
 #include <cstring>
 
 #include "fmt.h"
 #include "DlAbortEx.h"
-#include "util.h"
+#include "support/Numbers.h"
+#include "a2functional.h"
 
 namespace aria2 {
 
@@ -87,7 +90,7 @@ std::string GZipEncoder::encode(const unsigned char* in, size_t length,
       throw DL_ABORT_EX(fmt("libz::deflate() failed. cause:%s", strm_->msg));
     }
     size_t produced = outbuf.size() - strm_->avail_out;
-    out.append(outbuf.data(), outbuf.data() + produced);
+    out.append(reinterpret_cast<const char*>(outbuf.data()), produced);
     if (strm_->avail_out > 0) {
       break;
     }

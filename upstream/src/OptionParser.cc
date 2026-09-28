@@ -33,6 +33,15 @@
  */
 /* copyright --> */
 #include "OptionParser.h"
+#include "aria2/aria2.h"
+#include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <ostream>
+#include <stdlib.h>
+#include <string>
+#include <vector>
 
 #include <unistd.h>
 #include <getopt.h>
@@ -42,30 +51,28 @@
 #include <istream>
 #include <utility>
 
-#include "util.h"
+#include "support/Text.h"
+#include "platform/Process.h"
+#include "a2functional.h"
+#include "fmt.h"
+#include "DlAbortEx.h"
+#include "prefs.h"
 #include "OptionHandlerImpl.h"
 #include "Option.h"
-#include "A2STR.h"
-#include "a2functional.h"
 #include "array_fun.h"
-#include "OptionHandlerFactory.h"
-#include "DlAbortEx.h"
+#include "options/OptionCatalog.h"
+#include "LegacyInputAdapter.h"
 #include "error_code.h"
 #include "UnknownOptionException.h"
-#include "LogFactory.h"
-#include "fmt.h"
+#include "Log.h"
 
 namespace aria2 {
 
-OptionParser::OptionParser()
-    : handlers_(option::countOption(), nullptr), shortOpts_(256)
+OptionParser::OptionParser() : handlers_(option::countOption()), shortOpts_(256)
 {
 }
 
-OptionParser::~OptionParser()
-{
-  std::for_each(handlers_.begin(), handlers_.end(), Deleter());
-}
+OptionParser::~OptionParser() = default;
 
 namespace {
 template <typename InputIterator>
@@ -128,6 +135,7 @@ void putOptions(struct option* longOpts, int* plopt, InputIterator first,
   (*longOpts).flag = nullptr;
   (*longOpts).val = 0;
 }
+
 } // namespace
 
 namespace {
@@ -156,6 +164,17 @@ void OptionParser::parseArg(std::ostream& out,
                             std::vector<std::string>& nonopts, int argc,
                             char* argv[]) const
 {
+  auto adapted =
+      normalizeLegacyCommandLine(argc, argv, LegacyInputSource::CommandLine);
+  std::vector<char*> adaptedArgv;
+  if (!adapted.empty()) {
+    adaptedArgv.reserve(adapted.size());
+    for (auto& argument : adapted) {
+      adaptedArgv.push_back(argument.data());
+    }
+    argc = static_cast<int>(adaptedArgv.size());
+    argv = adaptedArgv.data();
+  }
   size_t numPublicOption =
       countPublicOption(handlers_.begin(), handlers_.end());
   int lopt;
@@ -234,8 +253,12 @@ void OptionParser::parseArg(std::ostream& out,
   std::copy(argv + optind, argv + argc, std::back_inserter(nonopts));
 }
 
-void OptionParser::parse(Option& option, std::istream& is) const
+namespace {
+template <typename FindHandler>
+void parseStreamOption(Option& option, std::istream& is,
+                       FindHandler findHandler, LegacyInputSource source)
 {
+  KeyVals options;
   std::string line;
   while (getline(is, line)) {
     if (line.empty() || line[0] == '#') {
@@ -245,47 +268,66 @@ void OptionParser::parse(Option& option, std::istream& is) const
     if (nv.first.first == nv.first.second) {
       continue;
     }
-    PrefPtr pref = option::k2p(std::string(nv.first.first, nv.first.second));
-    const OptionHandler* handler = find(pref);
+    auto name = util::strip(std::string(nv.first.first, nv.first.second));
+    auto value = std::string(nv.second.first, nv.second.second);
+    options.emplace_back(std::move(name), std::move(value));
+  }
+  for (const auto& item : normalizeLegacyInput(options, source)) {
+    PrefPtr pref = option::k2p(item.first);
+    const OptionHandler* handler = findHandler(pref);
     if (handler) {
-      handler->parse(option, std::string(nv.second.first, nv.second.second));
+      handler->parse(option, item.second);
     }
     else {
-      A2_LOG_WARN(fmt("Unknown option: %s", line.c_str()));
+      throw UNKNOWN_OPTION_EXCEPTION(item.first);
     }
   }
+}
+} // namespace
+
+void OptionParser::parse(Option& option, std::istream& is) const
+{
+  parseStreamOption(
+      option, is, [this](PrefPtr pref) { return find(pref); },
+      LegacyInputSource::Configuration);
+}
+
+void OptionParser::parseInternal(Option& option, std::istream& is) const
+{
+  parseStreamOption(
+      option, is, [this](PrefPtr pref) { return findByIdInternal(pref->i); },
+      LegacyInputSource::Session);
 }
 
 void OptionParser::parse(Option& option, const KeyVals& options) const
 {
-  for (const auto& o : options) {
+  for (const auto& o :
+       normalizeLegacyInput(options, LegacyInputSource::Library)) {
     auto pref = option::k2p(o.first);
     const OptionHandler* handler = find(pref);
     if (handler) {
       handler->parse(option, o.second);
     }
     else {
-      A2_LOG_WARN(fmt("Unknown option: %s", o.first.c_str()));
+      throw UNKNOWN_OPTION_EXCEPTION(o.first);
     }
   }
 }
 
-void OptionParser::setOptionHandlers(
-    const std::vector<OptionHandler*>& handlers)
+void OptionParser::setOptionHandlers(OptionHandlers handlers)
 {
-  for (const auto& h : handlers) {
-    addOptionHandler(h);
-  }
+  for (auto& handler : handlers)
+    addOptionHandler(std::move(handler));
 }
 
-void OptionParser::addOptionHandler(OptionHandler* handler)
+void OptionParser::addOptionHandler(std::unique_ptr<OptionHandler> handler)
 {
   size_t optId = handler->getPref()->i;
   assert(optId < handlers_.size());
-  handlers_[optId] = handler;
   if (handler->getShortName()) {
     shortOpts_[static_cast<unsigned char>(handler->getShortName())] = optId;
   }
+  handlers_[optId] = std::move(handler);
 }
 
 void OptionParser::parseDefaultValues(Option& option) const
@@ -302,7 +344,7 @@ std::vector<const OptionHandler*> OptionParser::findByTag(uint32_t tag) const
   std::vector<const OptionHandler*> result;
   for (const auto& h : handlers_) {
     if (h && !h->isHidden() && h->hasTag(tag)) {
-      result.push_back(h);
+      result.push_back(h.get());
     }
   }
   return result;
@@ -317,7 +359,7 @@ OptionParser::findByNameSubstring(const std::string& substring) const
       size_t nameLen = strlen(h->getName());
       if (std::search(h->getName(), h->getName() + nameLen, substring.begin(),
                       substring.end()) != h->getName() + nameLen) {
-        result.push_back(h);
+        result.push_back(h.get());
       }
     }
   }
@@ -329,7 +371,7 @@ std::vector<const OptionHandler*> OptionParser::findAll() const
   std::vector<const OptionHandler*> result;
   for (const auto& h : handlers_) {
     if (h && !h->isHidden()) {
-      result.push_back(h);
+      result.push_back(h.get());
     }
   }
   return result;
@@ -343,15 +385,23 @@ const OptionHandler* OptionParser::find(PrefPtr pref) const
 const OptionHandler* OptionParser::findById(size_t id) const
 {
   if (id >= handlers_.size()) {
-    return handlers_[0];
+    return handlers_[0].get();
   }
-  const OptionHandler* h = handlers_[id];
+  const OptionHandler* h = handlers_[id].get();
   if (!h || h->isHidden()) {
-    return handlers_[0];
+    return handlers_[0].get();
   }
   else {
     return h;
   }
+}
+
+const OptionHandler* OptionParser::findByIdInternal(size_t id) const
+{
+  if (id >= handlers_.size()) {
+    return handlers_[0].get();
+  }
+  return handlers_[id].get();
 }
 
 const OptionHandler* OptionParser::findByShortName(char shortName) const
@@ -366,8 +416,7 @@ const std::shared_ptr<OptionParser>& OptionParser::getInstance()
 {
   if (!optionParser_) {
     optionParser_ = std::make_shared<OptionParser>();
-    optionParser_->setOptionHandlers(
-        OptionHandlerFactory::createOptionHandlers());
+    optionParser_->setOptionHandlers(option::createHandlers());
   }
   return optionParser_;
 }

@@ -33,7 +33,10 @@
  */
 /* copyright --> */
 #include "ByteArrayDiskWriter.h"
-#include "A2STR.h"
+#include <cstddef>
+#include <cstdint>
+#include <ios>
+#include <string>
 #include "DlAbortEx.h"
 #include "fmt.h"
 
@@ -46,7 +49,7 @@ ByteArrayDiskWriter::ByteArrayDiskWriter(size_t maxLength)
 
 ByteArrayDiskWriter::~ByteArrayDiskWriter() = default;
 
-void ByteArrayDiskWriter::clear() { buf_.str(A2STR::NIL); }
+void ByteArrayDiskWriter::clear() { buf_.str(""); }
 
 void ByteArrayDiskWriter::initAndOpenFile(int64_t totalLength) { clear(); }
 
