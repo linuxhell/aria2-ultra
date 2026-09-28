@@ -86,6 +86,10 @@ const char C_CREATION_DATE[] = "creation date";
 const char C_COMMENT[] = "comment";
 const char C_COMMENT_UTF8[] = "comment.utf-8";
 const char C_CREATED_BY[] = "created by";
+const char C_META_VERSION[] = "meta version";
+const char C_FILE_TREE[] = "file tree";
+const char C_PIECE_LAYERS[] = "piece layers";
+const char C_PIECES_ROOT[] = "pieces root";
 
 const char DEFAULT_PEER_ID_PREFIX[] = "aria2-";
 const char DEFAULT_PEER_AGENT[] = "aria2/" PACKAGE_VERSION;
@@ -94,6 +98,85 @@ const char DEFAULT_PEER_AGENT[] = "aria2/" PACKAGE_VERSION;
 const std::string MULTI("multi");
 
 const std::string SINGLE("single");
+
+namespace {
+void extractV2Tree(TorrentAttribute* torrent, const Dict* tree,
+                   std::vector<std::string>& path)
+{
+  for (const auto& entry : *tree) {
+    if (entry.first.empty() || entry.first.find('/') != std::string::npos ||
+        entry.first.find('\\') != std::string::npos ||
+        util::detectDirTraversal(entry.first)) {
+      throw DL_ABORT_EX2("Invalid BEP 52 file tree path.",
+                         error_code::BITTORRENT_PARSE_ERROR);
+    }
+    const Dict* node = downcast<Dict>(entry.second.get());
+    if (!node) {
+      throw DL_ABORT_EX2("Invalid BEP 52 file tree node.",
+                         error_code::BITTORRENT_PARSE_ERROR);
+    }
+    path.push_back(entry.first);
+    if (node->containsKey("")) {
+      const Dict* props = downcast<Dict>(node->get(""));
+      const Integer* length = props ? downcast<Integer>(props->get(C_LENGTH)) : nullptr;
+      const String* root = props ? downcast<String>(props->get(C_PIECES_ROOT)) : nullptr;
+      if (node->size() != 1 || !length || length->i() < 0 ||
+          (length->i() != 0 && (!root || root->s().size() != 32)) ||
+          (root && root->s().size() != 32)) {
+        throw DL_ABORT_EX2("Invalid BEP 52 file properties.",
+                           error_code::BITTORRENT_PARSE_ERROR);
+      }
+      TorrentAttribute::V2FileEntry file;
+      file.path = path;
+      file.length = length->i();
+      if (root) file.piecesRoot = root->s();
+      torrent->v2FileEntries.push_back(std::move(file));
+    }
+    else {
+      extractV2Tree(torrent, node, path);
+    }
+    path.pop_back();
+  }
+}
+
+void extractV2Metadata(TorrentAttribute* torrent, const Dict* root,
+                       const Dict* info, size_t pieceLength)
+{
+  const Dict* tree = downcast<Dict>(info->get(C_FILE_TREE));
+  const Dict* layers = downcast<Dict>(root->get(C_PIECE_LAYERS));
+  if (!tree || !layers || pieceLength < 16384 ||
+      (pieceLength & (pieceLength - 1)) != 0) {
+    throw DL_ABORT_EX2("Invalid BEP 52 metadata.",
+                       error_code::BITTORRENT_PARSE_ERROR);
+  }
+  std::vector<std::string> path;
+  extractV2Tree(torrent, tree, path);
+  if (torrent->v2FileEntries.empty()) {
+    throw DL_ABORT_EX2("Empty BEP 52 file tree.",
+                       error_code::BITTORRENT_PARSE_ERROR);
+  }
+  for (const auto& layer : *layers) {
+    const String* hashes = downcast<String>(layer.second.get());
+    if (layer.first.size() != 32 || !hashes || hashes->s().size() % 32) {
+      throw DL_ABORT_EX2("Invalid BEP 52 piece layer.",
+                         error_code::BITTORRENT_PARSE_ERROR);
+    }
+    torrent->pieceLayers.emplace(layer.first, hashes->s());
+  }
+  for (const auto& file : torrent->v2FileEntries) {
+    if (file.length > static_cast<int64_t>(pieceLength)) {
+      auto layer = torrent->pieceLayers.find(file.piecesRoot);
+      const uint64_t count = 1 + (static_cast<uint64_t>(file.length) - 1) /
+                                      pieceLength;
+      if (layer == torrent->pieceLayers.end() ||
+          layer->second.size() / 32 != count) {
+        throw DL_ABORT_EX2("Missing or invalid BEP 52 piece layer.",
+                           error_code::BITTORRENT_PARSE_ERROR);
+      }
+    }
+  }
+}
+} // namespace
 
 namespace {
 void extractPieceHash(const std::shared_ptr<DownloadContext>& ctx,
@@ -348,6 +431,64 @@ void extractFileEntries(const std::shared_ptr<DownloadContext>& ctx,
 } // namespace
 
 namespace {
+void extractV2FileEntries(const std::shared_ptr<DownloadContext>& ctx,
+                          TorrentAttribute* torrent, const Dict* info,
+                          const std::shared_ptr<Option>& option,
+                          const std::string& defaultName,
+                          const std::string& overrideName)
+{
+  const String* name = downcast<String>(info->get(C_NAME));
+  torrent->name = overrideName.empty()
+                      ? (name ? util::encodeNonUtf8(name->s())
+                              : File(defaultName).getBasename() + ".file")
+                      : overrideName;
+  if (util::detectDirTraversal(torrent->name)) {
+    throw DL_ABORT_EX2("Invalid BEP 52 torrent name.",
+                       error_code::BITTORRENT_PARSE_ERROR);
+  }
+  torrent->mode = torrent->v2FileEntries.size() == 1 &&
+                          torrent->v2FileEntries[0].path.size() == 1
+                      ? BT_FILE_MODE_SINGLE : BT_FILE_MODE_MULTI;
+  std::vector<std::shared_ptr<FileEntry>> entries;
+  int64_t offset = 0;
+  const int64_t pieceLength = ctx->getPieceLength();
+  for (const auto& file : torrent->v2FileEntries) {
+    std::vector<std::string> path;
+    if (torrent->mode == BT_FILE_MODE_MULTI) path.push_back(torrent->name);
+    for (const auto& segment : file.path) {
+      if (util::detectDirTraversal(segment)) {
+        throw DL_ABORT_EX2("Invalid BEP 52 file path.",
+                           error_code::BITTORRENT_PARSE_ERROR);
+      }
+      path.push_back(util::encodeNonUtf8(segment));
+    }
+    std::string original = strjoin(path.begin(), path.end(), "/");
+    std::string suffix = util::escapePath(original);
+    if (file.length > std::numeric_limits<a2_off_t>::max() - offset) {
+      throw DL_ABORT_EX2("BEP 52 file size overflow.",
+                         error_code::BITTORRENT_PARSE_ERROR);
+    }
+    auto entry = std::make_shared<FileEntry>(
+        util::applyDir(option->get(PREF_DIR), suffix), file.length, offset,
+        std::vector<std::string>());
+    entry->setOriginalName(original);
+    entry->setSuffixPath(suffix);
+    entry->setMaxConnectionPerServer(
+        option->getAsInt(PREF_MAX_CONNECTION_PER_SERVER));
+    entries.push_back(entry);
+    offset += file.length;
+    if (file.length && offset % pieceLength)
+      offset += pieceLength - offset % pieceLength;
+  }
+  ctx->setFileEntries(entries.begin(), entries.end());
+  if (torrent->mode == BT_FILE_MODE_MULTI) {
+    ctx->setBasePath(util::applyDir(option->get(PREF_DIR),
+                                   util::escapePath(torrent->name)));
+  }
+}
+} // namespace
+
+namespace {
 void extractAnnounce(TorrentAttribute* torrent, const Dict* rootDict)
 {
   const List* announceList = downcast<List>(rootDict->get(C_ANNOUNCE_LIST));
@@ -429,6 +570,15 @@ void processRootDictionary(const std::shared_ptr<DownloadContext>& ctx,
   }
   auto torrent = std::make_shared<TorrentAttribute>();
 
+  const Integer* metaVersion = downcast<Integer>(infoDict->get(C_META_VERSION));
+  if (infoDict->containsKey(C_META_VERSION) &&
+      (!metaVersion || metaVersion->i() != 2)) {
+    throw DL_ABORT_EX2("Unsupported BitTorrent meta version.",
+                       error_code::BITTORRENT_PARSE_ERROR);
+  }
+  const bool v2 = metaVersion != nullptr;
+  torrent->metaVersion = v2 ? 2 : 1;
+
   // retrieve infoHash
   std::string encodedInfoDict = bencode2::encode(infoDict);
   unsigned char infoHash[INFO_HASH_LENGTH];
@@ -438,10 +588,18 @@ void processRootDictionary(const std::shared_ptr<DownloadContext>& ctx,
   torrent->infoHash.assign(&infoHash[0], &infoHash[INFO_HASH_LENGTH]);
   torrent->metadata = encodedInfoDict;
   torrent->metadataSize = encodedInfoDict.size();
+  if (v2) {
+    unsigned char hash[32];
+    auto sha256 = MessageDigest::create("sha-256");
+    message_digest::digest(hash, sizeof(hash), sha256.get(),
+                           encodedInfoDict.data(), encodedInfoDict.size());
+    torrent->infoHashV2.assign(hash, hash + sizeof(hash));
+  }
 
   // calculate the number of pieces
   const String* piecesData = downcast<String>(infoDict->get(C_PIECES));
-  if (!piecesData) {
+  if (v2 && !piecesData) torrent->infoHash.clear();
+  if (!piecesData && !v2) {
     throw DL_ABORT_EX2(fmt(MSG_MISSING_BT_INFO, C_PIECES),
                        error_code::BITTORRENT_PARSE_ERROR);
   }
@@ -449,7 +607,7 @@ void processRootDictionary(const std::shared_ptr<DownloadContext>& ctx,
   //   if(piecesData.s().empty()) {
   //     throw DL_ABORT_EX("The length of piece hash is 0.");
   //   }
-  size_t numPieces = piecesData->s().size() / PIECE_HASH_LENGTH;
+  size_t numPieces = piecesData ? piecesData->s().size() / PIECE_HASH_LENGTH : 0;
   // Commented out to download 0 length torrent.
   //   if(numPieces == 0) {
   //     throw DL_ABORT_EX("The number of pieces is 0.");
@@ -471,7 +629,13 @@ void processRootDictionary(const std::shared_ptr<DownloadContext>& ctx,
   size_t pieceLength = pieceLengthData->i();
   ctx->setPieceLength(pieceLength);
   // retrieve piece hashes
-  extractPieceHash(ctx, piecesData->s(), PIECE_HASH_LENGTH, numPieces);
+  if (piecesData) {
+    if (piecesData->s().size() % PIECE_HASH_LENGTH) {
+      throw DL_ABORT_EX2("Invalid v1 piece hashes.", error_code::BITTORRENT_PARSE_ERROR);
+    }
+    extractPieceHash(ctx, piecesData->s(), PIECE_HASH_LENGTH, numPieces);
+  }
+  if (v2) extractV2Metadata(torrent.get(), rootDict, infoDict, pieceLength);
   // private flag
   const Integer* privateData = downcast<Integer>(infoDict->get(C_PRIVATE));
   int privatefg = 0;
@@ -493,9 +657,16 @@ void processRootDictionary(const std::shared_ptr<DownloadContext>& ctx,
   urlList.erase(std::unique(urlList.begin(), urlList.end()), urlList.end());
 
   // retrieve file entries
-  extractFileEntries(ctx, torrent.get(), infoDict, option, defaultName,
-                     overrideName, urlList);
-  if ((ctx->getTotalLength() + pieceLength - 1) / pieceLength != numPieces) {
+  if (v2 && !piecesData) {
+    extractV2FileEntries(ctx, torrent.get(), infoDict, option, defaultName,
+                         overrideName);
+  }
+  else {
+    extractFileEntries(ctx, torrent.get(), infoDict, option, defaultName,
+                       overrideName, urlList);
+  }
+  if (piecesData &&
+      (ctx->getTotalLength() + pieceLength - 1) / pieceLength != numPieces) {
     throw DL_ABORT_EX2("Too few/many piece hash.",
                        error_code::BITTORRENT_PARSE_ERROR);
   }
@@ -913,9 +1084,10 @@ std::unique_ptr<TorrentAttribute> parseMagnet(const std::string& magnet)
   auto attrs = make_unique<TorrentAttribute>();
   std::string infoHash;
   for (auto xtiter = xts->begin(), eoi = xts->end();
-       xtiter != eoi && infoHash.empty(); ++xtiter) {
+       xtiter != eoi; ++xtiter) {
     const String* xt = downcast<String>(*xtiter);
-    if (util::startsWith(xt->s(), "urn:btih:")) {
+    if (!xt) continue;
+    if (infoHash.empty() && util::startsWith(xt->s(), "urn:btih:")) {
       size_t size = xt->s().end() - xt->s().begin() - 9;
       if (size == 32) {
         std::string rawhash =
@@ -931,8 +1103,14 @@ std::unique_ptr<TorrentAttribute> parseMagnet(const std::string& magnet)
         }
       }
     }
+    else if (attrs->infoHashV2.empty() &&
+             util::startsWith(xt->s(), "urn:btmh:1220") &&
+             xt->s().size() == 77) {
+      auto hash = util::fromHex(xt->s().begin() + 13, xt->s().end());
+      if (hash.size() == 32) attrs->infoHashV2 = std::move(hash);
+    }
   }
-  if (infoHash.empty()) {
+  if (infoHash.empty() && attrs->infoHashV2.empty()) {
     throw DL_ABORT_EX2("Bad BitTorrent Magnet URI. "
                        "No valid BitTorrent Info Hash found.",
                        error_code::MAGNET_PARSE_ERROR);
@@ -952,9 +1130,10 @@ std::unique_ptr<TorrentAttribute> parseMagnet(const std::string& magnet)
     name += util::encodeNonUtf8(dn->s());
   }
   else {
-    name += util::toHex(infoHash);
+    name += util::toHex(infoHash.empty() ? attrs->infoHashV2 : infoHash);
   }
   attrs->infoHash = infoHash;
+  if (!attrs->infoHashV2.empty()) attrs->metaVersion = 2;
   attrs->name = name;
   return attrs;
 }
@@ -986,6 +1165,12 @@ std::string metadata2Torrent(const std::string& metadata,
   }
   torrent += "4:info";
   torrent += metadata;
+  if (attrs->metaVersion == 2) {
+    Dict layers;
+    for (const auto& layer : attrs->pieceLayers) layers.put(layer.first, layer.second);
+    torrent += "12:piece layers";
+    torrent += bencode2::encode(&layers);
+  }
   torrent += "e";
   return torrent;
 }
@@ -997,8 +1182,13 @@ std::string torrent2Magnet(const TorrentAttribute* attrs)
     uri += "xt=urn:btih:";
     uri += util::toUpper(util::toHex(attrs->infoHash));
   }
-  else {
+  else if (attrs->infoHashV2.empty()) {
     return A2STR::NIL;
+  }
+  if (!attrs->infoHashV2.empty()) {
+    if (!attrs->infoHash.empty()) uri += "&";
+    uri += "xt=urn:btmh:1220";
+    uri += util::toUpper(util::toHex(attrs->infoHashV2));
   }
   if (!attrs->name.empty()) {
     uri += "&dn=";

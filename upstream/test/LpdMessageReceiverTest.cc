@@ -5,6 +5,7 @@
 #include <cppunit/extensions/HelperMacros.h>
 
 #include "TestUtil.h"
+#include "MulticastTestSupport.h"
 #include "Exception.h"
 #include "util.h"
 #include "LpdMessageReceiver.h"
@@ -30,6 +31,7 @@ CPPUNIT_TEST_SUITE_REGISTRATION(LpdMessageReceiverTest);
 
 void LpdMessageReceiverTest::testReceiveMessage()
 {
+  if (!hasMulticastTestInterface()) return;
   LpdMessageReceiver rcv(LPD_MULTICAST_ADDR, LPD_MULTICAST_PORT);
   CPPUNIT_ASSERT(rcv.init(""));
 

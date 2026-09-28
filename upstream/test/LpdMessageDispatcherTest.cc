@@ -6,6 +6,7 @@
 #include <cppunit/extensions/HelperMacros.h>
 
 #include "TestUtil.h"
+#include "MulticastTestSupport.h"
 #include "Exception.h"
 #include "util.h"
 #include "LpdMessageDispatcher.h"
@@ -43,6 +44,7 @@ void LpdMessageDispatcherTest::testCreateLpdRequest()
 
 void LpdMessageDispatcherTest::testSendMessage()
 {
+  if (!hasMulticastTestInterface()) return;
   std::shared_ptr<SocketCore> recvsock(new SocketCore(SOCK_DGRAM));
 #ifdef __MINGW32__
   recvsock->bindWithFamily(LPD_MULTICAST_PORT, AF_INET);

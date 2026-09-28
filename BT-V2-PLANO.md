@@ -170,26 +170,32 @@ magnet v2/híbrido, calcular corretamente infoHash v1 e/ou v2, e expor a
 árvore de arquivos (`file tree`) e as camadas de hash (`piece layers`) em
 memória. Ainda não baixa nem verifica peças pela rede.
 
-- [ ] `TorrentAttribute.h`: adicionar `infoHashV2` (32 bytes), `metaVersion`
+- [x] `TorrentAttribute.h`: adicionar `infoHashV2` (32 bytes), `metaVersion`
   (1 ou 2), `v2FileEntries` (path + length + piecesRoot por arquivo,
   seguindo a ordem de travessia do `file tree`), `pieceLayers` (map
   piecesRoot(32 bytes) → hashes SHA-256 concatenados daquele arquivo).
-- [ ] `bittorrent_helper.cc`: detectar `info["meta version"] == 2`;
+- [x] `bittorrent_helper.cc`: detectar `info["meta version"] == 2`;
   quando presente, parsear `info["file tree"]` (dict recursivo de
   segmentos de path; folha é uma entrada com chave `""` contendo
   `{length, pieces root}`) e `info["piece layers"]`; calcular infoHashV2
   em cima do mesmo `encodedInfoDict` já usado pro v1.
-- [ ] `parseMagnet()`: aceitar `xt=urn:btmh:1220<hex>` além de
+- [x] `parseMagnet()`: aceitar `xt=urn:btmh:1220<hex>` além de
   `xt=urn:btih:<hex>`; um magnet híbrido pode ter os dois `xt=` na mesma
   URI — nesse caso guardar os dois hashes.
-- [ ] `torrent2Magnet()` / `metadata2Torrent()`: atualizar para
+- [x] `torrent2Magnet()` / `metadata2Torrent()`: atualizar para
   incluir/aceitar o hash v2 quando presente (compatibilidade de saída).
-- [ ] Testes (CppUnit, mesmo padrão de `BittorrentHelperTest.cc`): torrent
+- [x] Testes (CppUnit, mesmo padrão de `BittorrentHelperTest.cc`): torrent
   v2-only sintético pequeno, torrent híbrido sintético pequeno, magnet v2
   e magnet híbrido — conferir infoHash v1 (quando aplicável), infoHash v2,
   file tree e piece layers batendo com valores calculados à mão.
-- [ ] `make check` passando (suite inteira, não só os testes novos — pra
-  garantir que v1 não quebrou).
+- [x] `make check` passando (suite inteira, não só os testes novos — pra
+  garantir que v1 não quebrou). Os dois testes LPD de multicast só executam
+  quando existe interface IPv4 multicast ativa; neste contêiner há apenas
+  loopback, portanto não exercitam envio/recebimento de multicast aqui.
+  Os demais 981 casos CppUnit passaram, incluindo os novos vetores reais
+  do libtorrent para v2-only e híbrido e os testes v1 existentes.
+  Downloads v2-only são recusados com erro explícito até a integração das
+  fases seguintes; híbridos ainda trafegam somente no caminho v1.
 
 ### Fase 2 — Verificação de integridade por árvore de merkle
 Objetivo: dado o conteúdo de uma peça (16 KiB por bloco, conforme BEP 52),
@@ -254,13 +260,11 @@ Objetivo: aria2-ultra fala v2 de verdade com outros peers.
 ## Estado atual
 
 - Fase 0: concluída.
-- Fase 1: iniciada (levantamento do código feito, listado acima); as
-  mudanças em si ainda não foram commitadas neste checkpoint.
+- Fase 1: parsing e hashes implementados e validados em Linux; downloads
+  v2-only aguardam integridade e protocolo. Veja observação dos testes LPD.
 - Fases 2-6: não iniciadas.
 
 ## Próximo passo concreto
 
-Implementar a Fase 1 completa: editar `TorrentAttribute.h` e
-`bittorrent_helper.cc`/`.h` conforme descrito acima, escrever os testes
-CppUnit, e rodar `autoreconf -i && ./configure && make check` neste
-mesmo ambiente Linux pra validar antes de comitar.
+Implementar a Fase 2: utilitário de Merkle puro, com vetores de referência
+e validação de `piece layers`, antes de integrar a verificação ao download.

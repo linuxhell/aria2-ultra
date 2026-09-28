@@ -364,7 +364,13 @@ void print(Output& o, const std::shared_ptr<DownloadContext>& dctx)
     }
     o.write("\n");
   }
-  o.printf("Info Hash: %s\n", util::toHex(torrentAttrs->infoHash).c_str());
+  if (!torrentAttrs->infoHash.empty()) {
+    o.printf("Info Hash: %s\n", util::toHex(torrentAttrs->infoHash).c_str());
+  }
+  if (!torrentAttrs->infoHashV2.empty()) {
+    o.printf("Info Hash v2: %s\n",
+             util::toHex(torrentAttrs->infoHashV2).c_str());
+  }
   o.printf("Piece Length: %sB\n",
            util::abbrevSize(dctx->getPieceLength()).c_str());
   o.printf("The Number of Pieces: %lu\n",

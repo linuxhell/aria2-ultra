@@ -39,6 +39,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 
 #include <aria2/aria2.h>
 #include "a2time.h"
@@ -46,12 +47,22 @@
 namespace aria2 {
 
 struct TorrentAttribute : public ContextAttribute {
+  struct V2FileEntry {
+    std::vector<std::string> path;
+    int64_t length;
+    std::string piecesRoot;
+  };
   std::string name;
   BtFileMode mode;
   std::vector<std::vector<std::string>> announceList;
   std::vector<std::pair<std::string, uint16_t>> nodes;
   // raw hash value 20 bytes.
   std::string infoHash;
+  // Empty for BEP 3 torrents; raw 32-byte SHA-256 for BEP 52.
+  std::string infoHashV2;
+  int metaVersion;
+  std::vector<V2FileEntry> v2FileEntries;
+  std::map<std::string, std::string> pieceLayers;
   std::string metadata;
   size_t metadataSize;
   bool privateTorrent;

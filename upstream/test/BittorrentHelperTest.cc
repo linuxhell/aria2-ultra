@@ -66,6 +66,10 @@ class BittorrentHelperTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testParseMagnet_base32);
   CPPUNIT_TEST(testMetadata2Torrent);
   CPPUNIT_TEST(testTorrent2Magnet);
+  CPPUNIT_TEST(testV2Metadata);
+  CPPUNIT_TEST(testHybridMetadata);
+  CPPUNIT_TEST(testV2Magnets);
+  CPPUNIT_TEST(testInvalidV2Metadata);
   CPPUNIT_TEST(testExtractPeerFromString);
   CPPUNIT_TEST(testExtractPeerFromList);
   CPPUNIT_TEST(testExtract2PeersFromList);
@@ -125,6 +129,10 @@ public:
   void testParseMagnet_base32();
   void testMetadata2Torrent();
   void testTorrent2Magnet();
+  void testV2Metadata();
+  void testHybridMetadata();
+  void testV2Magnets();
+  void testInvalidV2Metadata();
   void testExtractPeerFromString();
   void testExtractPeerFromList();
   void testExtract2PeersFromList();
@@ -136,6 +144,81 @@ public:
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(BittorrentHelperTest);
+
+void BittorrentHelperTest::testV2Metadata()
+{
+  auto ctx = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/v2_only.torrent", ctx, option_);
+  auto attrs = getTorrentAttrs(ctx);
+  CPPUNIT_ASSERT_EQUAL(2, attrs->metaVersion);
+  CPPUNIT_ASSERT_EQUAL(std::string("95e04d0c4bad94ab206efa884666fd89777dbe4f7bd9945af1829037a85c6192"),
+                       util::toHex(attrs->infoHashV2));
+  CPPUNIT_ASSERT_EQUAL(size_t(1), attrs->v2FileEntries.size());
+  CPPUNIT_ASSERT_EQUAL(std::string("test1MB"), attrs->v2FileEntries[0].path[0]);
+  CPPUNIT_ASSERT_EQUAL(int64_t(1048576), attrs->v2FileEntries[0].length);
+  CPPUNIT_ASSERT_EQUAL(size_t(1), attrs->pieceLayers.size());
+  CPPUNIT_ASSERT_EQUAL(size_t(512), attrs->pieceLayers.begin()->second.size());
+  CPPUNIT_ASSERT_EQUAL(size_t(1), ctx->getFileEntries().size());
+  CPPUNIT_ASSERT_EQUAL(std::string("./test1MB"), ctx->getFileEntries()[0]->getPath());
+  CPPUNIT_ASSERT(attrs->infoHash.empty());
+  auto roundTrip = std::make_shared<DownloadContext>();
+  const auto encoded = metadata2Torrent(attrs->metadata, attrs);
+  loadFromMemory(encoded, roundTrip, option_, "round-trip");
+  CPPUNIT_ASSERT_EQUAL(util::toHex(attrs->infoHashV2),
+                       util::toHex(getTorrentAttrs(roundTrip)->infoHashV2));
+}
+
+void BittorrentHelperTest::testHybridMetadata()
+{
+  auto ctx = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/hybrid.torrent", ctx, option_);
+  auto attrs = getTorrentAttrs(ctx);
+  CPPUNIT_ASSERT_EQUAL(2, attrs->metaVersion);
+  CPPUNIT_ASSERT_EQUAL(std::string("c14199bbec64d0e9e439aa3b6b7639e666b86eca"),
+                       util::toHex(attrs->infoHash));
+  CPPUNIT_ASSERT_EQUAL(std::string("597b180c1a170a585dfc5e85d834d69013ceda174b8f357d5bb1a0ca509faf0a"),
+                       util::toHex(attrs->infoHashV2));
+  CPPUNIT_ASSERT_EQUAL(size_t(1), attrs->v2FileEntries.size());
+  CPPUNIT_ASSERT_EQUAL(int64_t(65536), attrs->v2FileEntries[0].length);
+  CPPUNIT_ASSERT_EQUAL(std::string("sha-1"), ctx->getPieceHashType());
+}
+
+void BittorrentHelperTest::testV2Magnets()
+{
+  const std::string hash = "95e04d0c4bad94ab206efa884666fd89777dbe4f7bd9945af1829037a85c6192";
+  auto v2 = parseMagnet("magnet:?xt=urn:btmh:1220" + hash);
+  CPPUNIT_ASSERT_EQUAL(hash, util::toHex(v2->infoHashV2));
+  CPPUNIT_ASSERT(v2->infoHash.empty());
+  CPPUNIT_ASSERT(torrent2Magnet(v2.get()).find("xt=urn:btmh:1220") != std::string::npos);
+  auto hybrid = parseMagnet("magnet:?xt=urn:btmh:1220" + hash +
+                            "&xt=urn:btih:c14199bbec64d0e9e439aa3b6b7639e666b86eca");
+  CPPUNIT_ASSERT_EQUAL(hash, util::toHex(hybrid->infoHashV2));
+  CPPUNIT_ASSERT_EQUAL(std::string("c14199bbec64d0e9e439aa3b6b7639e666b86eca"),
+                       util::toHex(hybrid->infoHash));
+  const auto uri = torrent2Magnet(hybrid.get());
+  CPPUNIT_ASSERT(uri.find("xt=urn:btih:") != std::string::npos);
+  CPPUNIT_ASSERT(uri.find("&xt=urn:btmh:1220") != std::string::npos);
+}
+
+void BittorrentHelperTest::testInvalidV2Metadata()
+{
+  CPPUNIT_ASSERT_THROW(parseMagnet("magnet:?xt=urn:btmh:1220abcd"),
+                       RecoverableException);
+  const auto original = readFile(A2_TEST_DIR "/fixtures/bep52/v2_only.torrent");
+  auto malformed = original;
+  auto pos = malformed.find("12:piece layers");
+  CPPUNIT_ASSERT(pos != std::string::npos);
+  malformed.replace(pos, 15, "12:piece laYers");
+  auto ctx = std::make_shared<DownloadContext>();
+  CPPUNIT_ASSERT_THROW(loadFromMemory(malformed, ctx, option_, "invalid"),
+                       RecoverableException);
+  malformed = original;
+  pos = malformed.find("7:test1MB");
+  CPPUNIT_ASSERT(pos != std::string::npos);
+  malformed.replace(pos, 9, "7:../evil");
+  CPPUNIT_ASSERT_THROW(loadFromMemory(malformed, ctx, option_, "invalid"),
+                       RecoverableException);
+}
 
 void BittorrentHelperTest::testGetInfoHash()
 {
