@@ -32,13 +32,7 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "a2functional.h"
-#include "error_code.h"
-#include <memory>
-#include <string.h>
-#include <vector>
 #include "common.h"
-#include "platform/NativeText.h"
 
 #include <unistd.h>
 
@@ -53,7 +47,7 @@
 #include "Platform.h"
 #include "Exception.h"
 #include "console.h"
-#include "Log.h"
+#include "LogFactory.h"
 
 namespace aria2 {
 
@@ -101,6 +95,5 @@ int main(int argc, char** argv)
                                   ex.stackTrace().c_str());
     r = ex.getErrorCode();
   }
-  aria2::logging::shutdown();
   return r;
 }

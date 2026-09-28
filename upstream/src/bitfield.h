@@ -41,7 +41,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "a2functional.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -139,6 +139,8 @@ size_t countSetBitSlow(const Array& bitfield, size_t nbits)
                    lastByteMask(nbits)];
   return count;
 }
+
+void flipBit(unsigned char* data, size_t length, size_t bitIndex);
 
 // Stores first set bit index of bitfield to index.  bitfield contains
 // nbits. Returns true if set bit is found. Otherwise returns false.

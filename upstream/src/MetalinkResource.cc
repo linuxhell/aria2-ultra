@@ -33,12 +33,11 @@
  */
 /* copyright --> */
 #include "MetalinkResource.h"
-#include <string>
 
 namespace aria2 {
 
 std::string MetalinkResource::type2String[] = {
-    "sftp", "http", "https", "bittorrent", "not_supported", "unknown"};
+    "ftp", "http", "https", "bittorrent", "not_supported", "unknown"};
 
 MetalinkResource::MetalinkResource()
     : type(TYPE_UNKNOWN), priority(getLowestPriority()), maxConnections(-1)

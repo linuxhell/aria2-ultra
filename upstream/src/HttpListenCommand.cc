@@ -33,21 +33,19 @@
  */
 /* copyright --> */
 #include "HttpListenCommand.h"
-#include "Command.h"
-#include "a2netcompat.h"
-#include "common.h"
-#include <cstdint>
-#include <memory>
 #include "DownloadEngine.h"
 #include "RecoverableException.h"
 #include "message.h"
-#include "Log.h"
+#include "Logger.h"
+#include "LogFactory.h"
 #include "SocketCore.h"
 #include "HttpServerCommand.h"
+#include "CUIDCounter.h"
 #include "RequestGroupMan.h"
 #include "prefs.h"
 #include "Option.h"
-#include "a2functional.h"
+#include "util.h"
+#include "A2STR.h"
 #include "fmt.h"
 
 namespace aria2 {
@@ -76,8 +74,8 @@ bool HttpListenCommand::execute()
       socket->setTcpNodelay(true);
       auto endpoint = socket->getPeerInfo();
 
-      A2_LOG_TRACE(fmt("RPC accepted a connection from %s:%u",
-                       endpoint.addr.c_str(), endpoint.port));
+      A2_LOG_INFO(fmt("RPC: Accepted the connection from %s:%u.",
+                      endpoint.addr.c_str(), endpoint.port));
 
       e_->setNoWait(true);
       e_->addCommand(
@@ -85,7 +83,7 @@ bool HttpListenCommand::execute()
     }
   }
   catch (RecoverableException& e) {
-    A2_LOG_TRACE_EX(fmt(MSG_ACCEPT_FAILURE, getCuid()), e);
+    A2_LOG_DEBUG_EX(fmt(MSG_ACCEPT_FAILURE, getCuid()), e);
   }
   e_->addCommand(std::unique_ptr<Command>(this));
   return false;
@@ -105,9 +103,9 @@ bool HttpListenCommand::bindPort(uint16_t port)
     }
     serverSocket_->bind(nullptr, port, family_, flags);
     serverSocket_->beginListen();
-    A2_LOG_DEBUG(fmt(MSG_LISTENING_PORT, getCuid(), port));
+    A2_LOG_INFO(fmt(MSG_LISTENING_PORT, getCuid(), port));
     e_->addSocketForReadCheck(serverSocket_, this);
-    A2_LOG_INFO(fmt(_("IPv%d RPC: listening on TCP port %u"), ipv, port));
+    A2_LOG_NOTICE(fmt(_("IPv%d RPC: listening on TCP port %u"), ipv, port));
     return true;
   }
   catch (RecoverableException& e) {

@@ -58,6 +58,7 @@ class Command;
 class DownloadCommand;
 class DownloadContext;
 class PieceStorage;
+class BtProgressInfoFile;
 class Dependency;
 class PreDownloadHandler;
 class PostDownloadHandler;
@@ -65,21 +66,18 @@ class DiskWriterFactory;
 class Option;
 class RequestGroup;
 class CheckIntegrityEntry;
-class CurlDownload;
-namespace media {
-class Download;
-}
 struct DownloadResult;
+class URISelector;
 class URIResult;
 class RequestGroupMan;
 #ifdef ENABLE_BITTORRENT
-class BtDownload;
+class BtRuntime;
+class PeerStorage;
 #endif // ENABLE_BITTORRENT
 
 class RequestGroup {
 public:
-  enum HaltReason { NONE, SHUTDOWN_SIGNAL, USER_REQUEST, SHARE_COMPLETE };
-  enum FileOpenMode { DEFAULT_FILE_OPEN, RESTART_FROM_SCRATCH };
+  enum HaltReason { NONE, SHUTDOWN_SIGNAL, USER_REQUEST };
   enum State {
     // Waiting in the reserved queue
     STATE_WAITING,
@@ -88,10 +86,6 @@ public:
   };
 
 private:
-  void restoreEd2kFile(DownloadEngine* engine);
-  void createEd2kCommands(std::vector<std::unique_ptr<Command>>& commands,
-                          DownloadEngine* engine);
-
   // If this download is a part of another download(for example,
   // downloading torrent file described in Metalink file), this field
   // has the GID of parent RequestGroup. 0 means this is a parent
@@ -111,19 +105,22 @@ private:
 
   std::shared_ptr<PieceStorage> pieceStorage_;
 
+  std::shared_ptr<BtProgressInfoFile> progressInfoFile_;
+
   std::shared_ptr<DiskWriterFactory> diskWriterFactory_;
 
   std::shared_ptr<Dependency> dependency_;
+
+  std::unique_ptr<URISelector> uriSelector_;
 
   std::shared_ptr<MetadataInfo> metadataInfo_;
 
   RequestGroupMan* requestGroupMan_;
 
-  std::shared_ptr<CurlDownload> curlDownload_;
-  std::shared_ptr<media::Download> mediaDownload_;
-
 #ifdef ENABLE_BITTORRENT
-  std::shared_ptr<BtDownload> btDownload_;
+  BtRuntime* btRuntime_;
+
+  PeerStorage* peerStorage_;
 #endif // ENABLE_BITTORRENT
 
   // If this download generates another downloads when completed(for
@@ -142,7 +139,7 @@ private:
 
   Time lastModifiedTime_;
 
-  // Transport timeout.
+  // Timeout used for HTTP/FTP downloads.
   std::chrono::seconds timeout_;
 
   int state_;
@@ -150,7 +147,7 @@ private:
   int numConcurrentCommand_;
 
   /**
-   * This is the number of legacy segment connections.
+   * This is the number of connections used in streaming protocol(http/ftp)
    */
   int numStreamConnection_;
 
@@ -171,6 +168,8 @@ private:
   error_code::Value lastErrorCode_;
 
   std::string lastErrorMessage_;
+
+  bool saveControlFile_;
 
   bool fileAllocationEnabled_;
 
@@ -207,6 +206,9 @@ private:
   // returns error_code::UNKNOWN_ERROR.
   std::pair<error_code::Value, std::string> downloadResult() const;
 
+  void removeDefunctControlFile(
+      const std::shared_ptr<BtProgressInfoFile>& progressInfoFile);
+
 public:
   RequestGroup(const std::shared_ptr<GroupId>& gid,
                const std::shared_ptr<Option>& option);
@@ -222,9 +224,22 @@ public:
     return segmentMan_;
   }
 
-  // Create the first command for the selected native transport backend.
+  std::unique_ptr<CheckIntegrityEntry> createCheckIntegrityEntry();
+
+  // Returns first bootstrap commands to initiate a download.
+  // If this is HTTP/FTP download and file size is unknown, only 1 command
+  // (usually, HttpInitiateConnection or FtpInitiateConnection) will be created.
   void createInitialCommand(std::vector<std::unique_ptr<Command>>& commands,
                             DownloadEngine* e);
+
+  void createNextCommandWithAdj(std::vector<std::unique_ptr<Command>>& commands,
+                                DownloadEngine* e, int numAdj);
+
+  void createNextCommand(std::vector<std::unique_ptr<Command>>& commands,
+                         DownloadEngine* e, int numCommand);
+
+  void createNextCommand(std::vector<std::unique_ptr<Command>>& commands,
+                         DownloadEngine* e);
 
   bool downloadFinished() const;
 
@@ -237,8 +252,6 @@ public:
   int64_t getTotalLength() const;
 
   int64_t getCompletedLength() const;
-
-  std::vector<int64_t> getFileCompletedLengths() const;
 
   inline int64_t getPendingLength() const
   {
@@ -267,25 +280,6 @@ public:
 
   TransferStat calculateStat() const;
 
-  const std::shared_ptr<CurlDownload>& getCurlDownload() const
-  {
-    return curlDownload_;
-  }
-
-  const std::shared_ptr<media::Download>& getMediaDownload() const
-  {
-    return mediaDownload_;
-  }
-  void setMediaDownload(std::shared_ptr<media::Download> download)
-  {
-    mediaDownload_ = std::move(download);
-  }
-
-  void setCurlDownload(std::shared_ptr<CurlDownload> download)
-  {
-    curlDownload_ = std::move(download);
-  }
-
   const std::shared_ptr<DownloadContext>& getDownloadContext() const
   {
     return downloadContext_;
@@ -303,23 +297,12 @@ public:
 
   void setPieceStorage(const std::shared_ptr<PieceStorage>& pieceStorage);
 
-#ifdef ENABLE_BITTORRENT
-  const std::shared_ptr<BtDownload>& getBtDownload() const
-  {
-    return btDownload_;
-  }
-
-  void setBtDownload(std::shared_ptr<BtDownload> download)
-  {
-    btDownload_ = std::move(download);
-  }
-#endif // ENABLE_BITTORRENT
+  void setProgressInfoFile(
+      const std::shared_ptr<BtProgressInfoFile>& progressInfoFile);
 
   void increaseStreamCommand();
 
   void decreaseStreamCommand();
-
-  int getNumStreamCommand() const { return numStreamCommand_; }
 
   void increaseStreamConnection();
 
@@ -350,7 +333,8 @@ public:
   bool needsFileAllocation() const;
 
   /**
-   * Setting preLocalFileCheckEnabled_ to false skips existing-file checks.
+   * Setting preLocalFileCheckEnabled_ to false, then skip the check to see
+   * if a file is already exists and control file exists etc.
    * Always open file with DiskAdaptor::initAndOpenFile()
    */
   void setPreLocalFileCheckEnabled(bool f) { preLocalFileCheckEnabled_ = f; }
@@ -364,21 +348,6 @@ public:
   bool isHaltRequested() const { return haltRequested_; }
 
   bool isForceHaltRequested() const { return forceHaltRequested_; }
-
-  bool isUserRequestedHalt() const
-  {
-    return haltRequested_ && haltReason_ == USER_REQUEST;
-  }
-
-  bool isShutdownRequested() const
-  {
-    return haltRequested_ && haltReason_ == SHUTDOWN_SIGNAL;
-  }
-
-  bool isShareComplete() const
-  {
-    return haltRequested_ && haltReason_ == SHARE_COMPLETE;
-  }
 
   void setPauseRequested(bool f);
 
@@ -407,6 +376,11 @@ public:
 
   void clearPreDownloadHandler();
 
+  void
+  processCheckIntegrityEntry(std::vector<std::unique_ptr<Command>>& commands,
+                             std::unique_ptr<CheckIntegrityEntry> entry,
+                             DownloadEngine* e);
+
   // Initializes pieceStorage_ and segmentMan_.  We guarantee that
   // either both of pieceStorage_ and segmentMan_ are initialized or
   // they are not.
@@ -416,13 +390,25 @@ public:
 
   bool downloadFinishedByFileLength();
 
+  void
+  loadAndOpenFile(const std::shared_ptr<BtProgressInfoFile>& progressInfoFile);
+
   void shouldCancelDownloadForSafety();
+
+  void adjustFilename(const std::shared_ptr<BtProgressInfoFile>& infoFile);
 
   std::shared_ptr<DownloadResult> createDownloadResult() const;
 
   const std::shared_ptr<Option>& getOption() const { return option_; }
 
   void reportDownloadFinished();
+
+  void setURISelector(std::unique_ptr<URISelector> uriSelector);
+
+  const std::unique_ptr<URISelector>& getURISelector() const
+  {
+    return uriSelector_;
+  }
 
   void applyLastModifiedTimeToLocalFiles();
 
@@ -465,6 +451,14 @@ public:
   }
 
   error_code::Value getLastErrorCode() const { return lastErrorCode_; }
+
+  void saveControlFile() const;
+
+  void removeControlFile() const;
+
+  void enableSaveControlFile() { saveControlFile_ = true; }
+
+  void disableSaveControlFile() { saveControlFile_ = false; }
 
   template <typename InputIterator>
   void followedBy(InputIterator groupFirst, InputIterator groupLast)
@@ -510,10 +504,7 @@ public:
 
   int getState() const { return state_; }
 
-  void setState(int state);
-
-  void synchronizeEd2kSharingTime();
-  int64_t getEd2kSharingTime();
+  void setState(int state) { state_ = state; }
 
   bool isSeedOnlyEnabled() { return seedOnly_; }
 

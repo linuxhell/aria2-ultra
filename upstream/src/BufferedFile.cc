@@ -33,19 +33,13 @@
  */
 /* copyright --> */
 #include "BufferedFile.h"
-#include <cstdio>
-#include <stdio.h>
-#ifdef _WIN32
-#  include <io.h>
-#endif
 
 #include <cstring>
 #include <cstdarg>
 #include <ostream>
 
 #include "a2io.h"
-#include "platform/NativeText.h"
-#include "a2functional.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -59,8 +53,7 @@ BufferedFile::BufferedFile(const char* filename, const char* mode)
               a2fopen(filename, mode)
 #endif // !__MINGW32__
               ),
-      supportsColor_(fp_ ? isatty(fileno(fp_)) : false),
-      syncOnClose_(mode[0] == 'w' || mode[0] == 'a' || std::strchr(mode, '+'))
+      supportsColor_(fp_ ? isatty(fileno(fp_)) : false)
 {
 }
 
@@ -87,22 +80,14 @@ int BufferedFile::onClose()
 {
   int rv = 0;
   if (fp_) {
-    if (fflush(fp_) != 0) {
-      rv = EOF;
-    }
+    fflush(fp_);
 #ifndef __MINGW32__
-    if (syncOnClose_ && fp_ != stdin && fsync(fileno(fp_)) != 0) {
-      rv = EOF;
-    }
+    fsync(fileno(fp_));
 #else  // __MINGW32__
-    if (syncOnClose_ && fp_ != stdin && _commit(fileno(fp_)) != 0) {
-      rv = EOF;
-    }
+    _commit(fileno(fp_));
 #endif // __MINGW32__
     if (fp_ != stdin && fp_ != stderr) {
-      if (fclose(fp_) != 0) {
-        rv = EOF;
-      }
+      rv = fclose(fp_);
     }
     fp_ = nullptr;
   }

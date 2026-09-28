@@ -52,20 +52,20 @@ public:
   ByteArrayDiskWriter(size_t maxLength = 15_m);
   virtual ~ByteArrayDiskWriter();
 
-  virtual void initAndOpenFile(int64_t totalLength = 0) override;
+  virtual void initAndOpenFile(int64_t totalLength = 0) CXX11_OVERRIDE;
 
-  virtual void openFile(int64_t totalLength = 0) override;
+  virtual void openFile(int64_t totalLength = 0) CXX11_OVERRIDE;
 
-  virtual void closeFile() override;
+  virtual void closeFile() CXX11_OVERRIDE;
 
-  virtual void openExistingFile(int64_t totalLength = 0) override;
+  virtual void openExistingFile(int64_t totalLength = 0) CXX11_OVERRIDE;
 
   virtual void writeData(const unsigned char* data, size_t len,
-                         int64_t offset) override;
+                         int64_t offset) CXX11_OVERRIDE;
   virtual ssize_t readData(unsigned char* data, size_t len,
-                           int64_t offset) override;
+                           int64_t offset) CXX11_OVERRIDE;
 
-  virtual int64_t size() override;
+  virtual int64_t size() CXX11_OVERRIDE;
 
   void setString(const std::string& s);
 

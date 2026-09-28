@@ -32,16 +32,7 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include <algorithm>
-#include <cstdio>
-#include <ios>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
 #include "common.h"
-
-#include "ApplicationStatePath.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -51,9 +42,9 @@
 #include "Option.h"
 #include "prefs.h"
 #include "OptionParser.h"
+#include "OptionHandlerFactory.h"
 #include "OptionHandler.h"
-#include "support/Text.h"
-#include "a2functional.h"
+#include "util.h"
 #include "message.h"
 #include "Exception.h"
 #include "a2io.h"
@@ -64,10 +55,11 @@
 #include "UnknownOptionException.h"
 #include "error_code.h"
 #include "SimpleRandomizer.h"
+#include "bittorrent_helper.h"
 #include "BufferedFile.h"
 #include "console.h"
 #include "array_fun.h"
-#include "Log.h"
+#include "LogFactory.h"
 #ifndef HAVE_DAEMON
 #  include "daemon.h"
 #endif // !HAVE_DAEMON
@@ -270,6 +262,7 @@ error_code::Value option_processing(Option& op, bool standalone,
     // Override configuration with environment variables.
     overrideWithEnv(*confOption, oparser, PREF_HTTP_PROXY, "http_proxy");
     overrideWithEnv(*confOption, oparser, PREF_HTTPS_PROXY, "https_proxy");
+    overrideWithEnv(*confOption, oparser, PREF_FTP_PROXY, "ftp_proxy");
     overrideWithEnv(*confOption, oparser, PREF_ALL_PROXY, "all_proxy");
     overrideWithEnv(*confOption, oparser, PREF_NO_PROXY, "no_proxy");
     if (!standalone) {
@@ -317,12 +310,9 @@ error_code::Value option_processing(Option& op, bool standalone,
 #ifdef ENABLE_METALINK
       op.blank(PREF_METALINK_FILE) &&
 #endif // ENABLE_METALINK
-      op.blank(PREF_INPUT_FILE) &&
-      !File(state::ed2kDatabaseFile(&op)).isFile()) {
+      op.blank(PREF_INPUT_FILE)) {
     if (uris.empty()) {
-      global::cerr()->printf(op.getAsBool(PREF_DAEMON)
-                                 ? MSG_DAEMON_REQUIRES_WORK
-                                 : MSG_URI_REQUIRED);
+      global::cerr()->printf(MSG_URI_REQUIRED);
       global::cerr()->printf("\n");
       showUsage("", oparser, global::cerr());
       return error_code::UNKNOWN_ERROR;

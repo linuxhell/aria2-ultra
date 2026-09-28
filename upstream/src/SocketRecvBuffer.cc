@@ -33,15 +33,12 @@
  */
 /* copyright --> */
 #include "SocketRecvBuffer.h"
-#include <cstddef>
-#include <iterator>
-#include <memory>
-#include <utility>
 
 #include <cstring>
 #include <cassert>
 
 #include "SocketCore.h"
+#include "LogFactory.h"
 
 namespace aria2 {
 
@@ -56,6 +53,7 @@ ssize_t SocketRecvBuffer::recv()
 {
   size_t n = std::end(buf_) - last_;
   if (n == 0) {
+    A2_LOG_DEBUG("Buffer full");
     return 0;
   }
   socket_->readData(last_, n);

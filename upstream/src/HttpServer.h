@@ -53,12 +53,21 @@ class DownloadEngine;
 class SocketRecvBuffer;
 class DiskWriter;
 
+namespace util {
+namespace security {
+class HMAC;
+class HMACResult;
+} // namespace security
+} // namespace util
+
 enum RequestType { RPC_TYPE_NONE, RPC_TYPE_XML, RPC_TYPE_JSON, RPC_TYPE_JSONP };
 
 // HTTP server class handling RPC request from the client.  It is not
 // intended to be a generic HTTP server.
 class HttpServer {
 private:
+  static std::unique_ptr<util::security::HMAC> hmac_;
+
   std::shared_ptr<SocketCore> socket_;
   std::shared_ptr<SocketRecvBuffer> socketRecvBuffer_;
   SocketBuffer socketBuffer_;
@@ -72,6 +81,8 @@ private:
   std::unique_ptr<DiskWriter> lastBody_;
   bool keepAlive_;
   bool gzip_;
+  std::unique_ptr<util::security::HMACResult> username_;
+  std::unique_ptr<util::security::HMACResult> password_;
   bool acceptsGZip_;
   std::string allowOrigin_;
   bool secure_;
@@ -113,6 +124,11 @@ public:
   // lines of HTTP header field and each line must end with "\r\n".
   void feedUpgradeResponse(const std::string& protocol,
                            const std::string& headers);
+
+  bool authenticate();
+
+  void setUsernamePassword(const std::string& username,
+                           const std::string& password);
 
   ssize_t sendResponse();
 

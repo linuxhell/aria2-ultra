@@ -33,22 +33,15 @@
  */
 /* copyright --> */
 #include "WebSocketSessionMan.h"
-#include "GroupId.h"
-#include "ValueBase.h"
-#include "aria2/aria2.h"
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
 
-#include <algorithm>
 #include <cassert>
 
 #include "WebSocketSession.h"
 #include "RequestGroup.h"
 #include "json.h"
+#include "util.h"
 #include "WebSocketInteractionCommand.h"
-#include "Log.h"
+#include "LogFactory.h"
 
 namespace aria2 {
 
@@ -61,23 +54,15 @@ WebSocketSessionMan::~WebSocketSessionMan() = default;
 void WebSocketSessionMan::addSession(
     const std::shared_ptr<WebSocketSession>& wsSession)
 {
-  A2_LOG_TRACE("WebSocket session added.");
+  A2_LOG_DEBUG("WebSocket session added.");
   sessions_.insert(wsSession);
 }
 
 void WebSocketSessionMan::removeSession(
     const std::shared_ptr<WebSocketSession>& wsSession)
 {
-  A2_LOG_TRACE("WebSocket session removed.");
+  A2_LOG_DEBUG("WebSocket session removed.");
   sessions_.erase(wsSession);
-}
-
-size_t WebSocketSessionMan::countNotificationRecipients() const
-{
-  return std::count_if(sessions_.begin(), sessions_.end(),
-                       [](const std::shared_ptr<WebSocketSession>& session) {
-                         return session->isAuthorized();
-                       });
 }
 
 void WebSocketSessionMan::addNotification(const std::string& method,
@@ -93,9 +78,6 @@ void WebSocketSessionMan::addNotification(const std::string& method,
   dict->put("params", std::move(params));
   std::string msg = json::encode(dict.get());
   for (auto& session : sessions_) {
-    if (!session->isAuthorized()) {
-      continue;
-    }
     session->addTextMessage(msg, false);
     session->getCommand()->updateWriteCheck();
   }
@@ -131,8 +113,7 @@ const std::string& getMethodName(DownloadEvent event)
     // Not reachable
     assert(0);
     // For suppress compiler warning
-    static const std::string empty;
-    return empty;
+    return A2STR::NIL;
   }
 }
 } // namespace

@@ -34,23 +34,12 @@
 /* copyright --> */
 
 #include "GZipFile.h"
-#include <cstdarg>
-#include <cstddef>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <stdio.h>
-#include <zlib.h>
-#ifdef _WIN32
-#  include <io.h>
-#endif
 
 #include <algorithm>
 #include <limits>
 
 #include "a2io.h"
-#include "platform/NativeText.h"
-#include "a2functional.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -72,9 +61,13 @@ GZipFile::GZipFile(const char* filename, const char* mode)
     if (fd != -1) {
       fp_ = gzdopen(fd, mode);
       if (fp_) {
-        // fp_ retains fd and gzclose() will close fd as well.
+// fp_ retains fd and gzclose() will close fd as well.
+#if HAVE_GZBUFFER
         gzbuffer(fp_, 1 << 17);
+#endif
+#if HAVE_GZSETPARAMS
         gzsetparams(fp_, 2, Z_DEFAULT_STRATEGY);
+#endif
       }
       else {
         ::close(fd);

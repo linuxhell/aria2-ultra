@@ -44,7 +44,7 @@ namespace rpc {
 class WebSocketResponseCommand : public AbstractHttpServerResponseCommand {
 protected:
   virtual void afterSend(const std::shared_ptr<HttpServer>& httpServer,
-                         DownloadEngine* e) override;
+                         DownloadEngine* e) CXX11_OVERRIDE;
 
 public:
   WebSocketResponseCommand(cuid_t cuid,

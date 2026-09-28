@@ -48,9 +48,10 @@
 #include "Request.h"
 #include "URIResult.h"
 #include "error_code.h"
+#include "A2STR.h"
 #include "TimerA2.h"
+#include "util.h"
 #include "a2functional.h"
-#include "prefs.h"
 
 namespace aria2 {
 
@@ -180,7 +181,7 @@ public:
   std::shared_ptr<Request>
   getRequest(URISelector* selector, bool uriReuse,
              const std::vector<std::pair<size_t, std::string>>& usedHosts,
-             const std::string& referer = "",
+             const std::string& referer = A2STR::NIL,
              const std::string& method = Request::METHOD_GET);
 
   // Finds pooled Request object which is faster than passed one,

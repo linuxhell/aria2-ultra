@@ -32,16 +32,7 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifdef _WIN32
-#  include <windows.h>
-#endif
 #include "MultiUrlRequestInfo.h"
-#include "common.h"
-#include "error_code.h"
-#include <chrono>
-#include <memory>
-#include <utility>
-#include <vector>
 
 #include <signal.h>
 
@@ -50,23 +41,24 @@
 
 #include "RequestGroupMan.h"
 #include "DownloadEngine.h"
-#include "Log.h"
+#include "LogFactory.h"
+#include "Logger.h"
 #include "RequestGroup.h"
 #include "prefs.h"
 #include "DownloadEngineFactory.h"
 #include "RecoverableException.h"
 #include "message.h"
-#include "support/Network.h"
-#include "platform/Process.h"
-#include "a2functional.h"
-#include "fmt.h"
-#include "DlAbortEx.h"
+#include "util.h"
 #include "Option.h"
 #include "ConsoleStatCalc.h"
 #include "NullStatCalc.h"
+#include "CookieStorage.h"
 #include "File.h"
+#include "Netrc.h"
+#include "AuthConfigFactory.h"
 #include "SessionSerializer.h"
 #include "TimeA2.h"
+#include "fmt.h"
 #include "SocketCore.h"
 #include "NullOutputFile.h"
 #include "UriListParser.h"
@@ -81,6 +73,9 @@
 #ifdef ENABLE_SSL
 #  include "TLSContext.h"
 #endif // ENABLE_SSL
+#ifdef ENABLE_ASYNC_DNS
+#  include "AsyncNameResolver.h"
+#endif // ENABLE_ASYNC_DNS
 
 namespace aria2 {
 
@@ -173,7 +168,7 @@ void MultiUrlRequestInfo::printMessageForContinue()
   if (!option_->getAsBool(PREF_QUIET)) {
     global::cout()->printf(
         "\n%s\n%s\n",
-        _("Aria2 Next will resume download if the transfer is restarted."),
+        _("aria2 will resume download if the transfer is restarted."),
         _("If there are any errors, then see the log file. See '-l' option in "
           "help/man page for details."));
   }
@@ -195,10 +190,11 @@ int MultiUrlRequestInfo::prepare()
       // We set server TLS context to the SocketCore before creating
       // DownloadEngine instance.
       auto minTLSVer = util::toTLSVersion(option_->get(PREF_MIN_TLS_VERSION));
-      std::shared_ptr<TLSContext> svTlsContext(TLSContext::make(minTLSVer));
-      if (!svTlsContext->good() || !svTlsContext->addCredentialFile(
-                                       option_->get(PREF_RPC_CERTIFICATE),
-                                       option_->get(PREF_RPC_PRIVATE_KEY))) {
+      std::shared_ptr<TLSContext> svTlsContext(
+          TLSContext::make(TLS_SERVER, minTLSVer));
+      if (!svTlsContext->addCredentialFile(
+              option_->get(PREF_RPC_CERTIFICATE),
+              option_->get(PREF_RPC_PRIVATE_KEY))) {
         throw DL_ABORT_EX("Loading private key and/or certificate for secure "
                           "RPC failed.");
       }
@@ -218,6 +214,71 @@ int MultiUrlRequestInfo::prepare()
     }
 #endif // ENABLE_WEBSOCKET
 
+    if (!option_->blank(PREF_LOAD_COOKIES)) {
+      File cookieFile(option_->get(PREF_LOAD_COOKIES));
+      if (cookieFile.isFile() &&
+          e_->getCookieStorage()->load(cookieFile.getPath(),
+                                       Time().getTimeFromEpoch())) {
+        A2_LOG_INFO(
+            fmt("Loaded cookies from '%s'.", cookieFile.getPath().c_str()));
+      }
+      else {
+        A2_LOG_ERROR(
+            fmt(MSG_LOADING_COOKIE_FAILED, cookieFile.getPath().c_str()));
+      }
+    }
+
+    auto authConfigFactory = make_unique<AuthConfigFactory>();
+    File netrccf(option_->get(PREF_NETRC_PATH));
+    if (!option_->getAsBool(PREF_NO_NETRC) && netrccf.isFile()) {
+#ifdef __MINGW32__
+      // Windows OS does not have permission, so set it to 0.
+      mode_t mode = 0;
+#else  // !__MINGW32__
+      mode_t mode = netrccf.mode();
+#endif // !__MINGW32__
+      if (mode & (S_IRWXG | S_IRWXO)) {
+        A2_LOG_NOTICE(fmt(MSG_INCORRECT_NETRC_PERMISSION,
+                          option_->get(PREF_NETRC_PATH).c_str()));
+      }
+      else {
+        auto netrc = make_unique<Netrc>();
+        netrc->parse(option_->get(PREF_NETRC_PATH));
+        authConfigFactory->setNetrc(std::move(netrc));
+      }
+    }
+    e_->setAuthConfigFactory(std::move(authConfigFactory));
+
+#ifdef ENABLE_SSL
+    auto minTLSVer = util::toTLSVersion(option_->get(PREF_MIN_TLS_VERSION));
+    std::shared_ptr<TLSContext> clTlsContext(
+        TLSContext::make(TLS_CLIENT, minTLSVer));
+    if (!option_->blank(PREF_CERTIFICATE)) {
+      clTlsContext->addCredentialFile(option_->get(PREF_CERTIFICATE),
+                                      option_->get(PREF_PRIVATE_KEY));
+    }
+
+    if (!option_->blank(PREF_CA_CERTIFICATE)) {
+      if (!clTlsContext->addTrustedCACertFile(
+              option_->get(PREF_CA_CERTIFICATE))) {
+        A2_LOG_INFO(MSG_WARN_NO_CA_CERT);
+      }
+    }
+    else if (option_->getAsBool(PREF_CHECK_CERTIFICATE)) {
+      if (!clTlsContext->addSystemTrustedCACerts()) {
+        A2_LOG_INFO(MSG_WARN_NO_CA_CERT);
+      }
+    }
+    clTlsContext->setVerifyPeer(option_->getAsBool(PREF_CHECK_CERTIFICATE));
+    SocketCore::setClientTLSContext(clTlsContext);
+#endif
+
+    std::string serverStatIf = option_->get(PREF_SERVER_STAT_IF);
+    if (!serverStatIf.empty()) {
+      e_->getRequestGroupMan()->loadServerStat(serverStatIf);
+      e_->getRequestGroupMan()->removeStaleServerStat(
+          std::chrono::seconds(option_->getAsInt(PREF_SERVER_STAT_TIMEOUT)));
+    }
     e_->setStatCalc(getStatCalc(option_));
     if (uriListParser_) {
       e_->getRequestGroupMan()->setUriListParser(uriListParser_);
@@ -241,6 +302,14 @@ int MultiUrlRequestInfo::prepare()
 error_code::Value MultiUrlRequestInfo::getResult()
 {
   error_code::Value returnValue = error_code::FINISHED;
+  if (!option_->blank(PREF_SAVE_COOKIES)) {
+    e_->getCookieStorage()->saveNsFormat(option_->get(PREF_SAVE_COOKIES));
+  }
+
+  const std::string& serverStatOf = option_->get(PREF_SERVER_STAT_OF);
+  if (!serverStatOf.empty()) {
+    e_->getRequestGroupMan()->saveServerStat(serverStatOf);
+  }
   if (!option_->getAsBool(PREF_QUIET) &&
       option_->get(PREF_DOWNLOAD_RESULT) != A2_V_HIDE) {
     e_->getRequestGroupMan()->showDownloadResults(
@@ -264,11 +333,11 @@ error_code::Value MultiUrlRequestInfo::getResult()
   if (!option_->blank(PREF_SAVE_SESSION)) {
     const std::string& filename = option_->get(PREF_SAVE_SESSION);
     if (sessionSerializer.save(filename)) {
-      A2_LOG_INFO(
+      A2_LOG_NOTICE(
           fmt(_("Serialized session to '%s' successfully."), filename.c_str()));
     }
     else {
-      A2_LOG_INFO(
+      A2_LOG_NOTICE(
           fmt(_("Failed to serialize session to '%s'."), filename.c_str()));
     }
   }

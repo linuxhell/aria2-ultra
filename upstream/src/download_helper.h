@@ -44,33 +44,36 @@
 
 namespace aria2 {
 
-namespace ed2k {
-struct SearchQuery;
-} // namespace ed2k
-
 class RequestGroup;
 class Option;
 class MetadataInfo;
 class DownloadContext;
 class UriListParser;
+class ValueBase;
 class GroupId;
-#ifdef ENABLE_BITTORRENT
-class BtDownload;
-#endif
 
 #ifdef ENABLE_BITTORRENT
-// Create a libtorrent-backed request group from a local torrent file or the
-// supplied torrent data. URI arguments are registered as web seeds.
+// Create RequestGroup object using torrent file specified by
+// metaInfoUri, which is treated as local file path. If non-empty
+// torrentData is specified, then it is used as a content of torrent
+// file instead. If adjustAnnounceUri is true, announce URIs are
+// adjusted using bittorrent::adjustAnnounceUri().  In this function,
+// force-sequential is ignored.
 void createRequestGroupForBitTorrent(
     std::vector<std::shared_ptr<RequestGroup>>& result,
     const std::shared_ptr<Option>& option, const std::vector<std::string>& uris,
-    const std::string& metaInfoUri, const std::string& torrentData = "");
+    const std::string& metaInfoUri, const std::string& torrentData = "",
+    bool adjustAnnounceUri = true);
 
+// Create RequestGroup object using already decoded torrent metainfo
+// structure.  If adjustAnnounceUri is true, announce URIs are
+// adjusted using bittorrent::adjustAnnounceUri().  In this function,
+// force-sequential is ignored.
 void createRequestGroupForBitTorrent(
     std::vector<std::shared_ptr<RequestGroup>>& result,
-    const std::shared_ptr<Option>& option,
-    const std::shared_ptr<BtDownload>& download,
-    const std::string& metaInfoUri);
+    const std::shared_ptr<Option>& option, const std::vector<std::string>& uris,
+    const std::string& metaInfoUri, const ValueBase* torrent,
+    bool adjustAnnounceUri = true);
 
 #endif // ENABLE_BITTORRENT
 
@@ -123,14 +126,6 @@ void createRequestGroupForUri(
     const std::shared_ptr<Option>& option, const std::vector<std::string>& uris,
     bool ignoreForceSequential = false, bool ignoreLocalPath = false,
     bool throwOnError = false);
-
-std::shared_ptr<RequestGroup>
-createEd2kFileRequestGroup(const std::string& ed2kUri,
-                           const std::shared_ptr<Option>& optionTemplate);
-
-std::shared_ptr<RequestGroup>
-createEd2kSearchRequestGroup(const ed2k::SearchQuery& query,
-                             const std::shared_ptr<Option>& optionTemplate);
 
 template <typename InputIterator>
 void setMetadataInfo(InputIterator first, InputIterator last,

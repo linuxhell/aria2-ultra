@@ -33,14 +33,6 @@
  */
 /* copyright --> */
 #include "SessionSerializer.h"
-#include "ContextAttribute.h"
-#include "GroupId.h"
-#include "error_code.h"
-#include "timegm.h"
-#include <cstring>
-#include <memory>
-#include <string>
-#include <vector>
 
 #include <cstdio>
 #include <cassert>
@@ -50,14 +42,13 @@
 #include "RequestGroupMan.h"
 #include "a2functional.h"
 #include "File.h"
+#include "A2STR.h"
 #include "download_helper.h"
 #include "Option.h"
 #include "DownloadResult.h"
-#include "DownloadContext.h"
 #include "FileEntry.h"
 #include "prefs.h"
-#include "support/Text.h"
-#include "support/Encoding.h"
+#include "util.h"
 #include "array_fun.h"
 #include "BufferedFile.h"
 #include "OptionParser.h"
@@ -185,10 +176,11 @@ bool writeUri(IOFile& fp, InputIterator first, InputIterator last,
 }
 } // namespace
 
-// Persist the GID that represents the user-visible source.
+// The downloads whose followedBy() is empty is persisted with its
+// GID without no problem. For other cases, there are several patterns.
 //
 // 1. magnet URI
-//  The single BitTorrent GID is persisted.
+//  GID of metadata download is persisted.
 // 2. URI to torrent file
 //  GID of torrent file download is persisted.
 // 3. URI to metalink file
@@ -220,9 +212,6 @@ bool writeDownloadResult(IOFile& fp, std::set<a2_gid_t>& metainfoCache,
     }
     // only save first file entry
     if (dr->fileEntries.empty()) {
-      return true;
-    }
-    if (dr->attrs.size() > CTX_ATTR_ED2K && dr->attrs[CTX_ATTR_ED2K]) {
       return true;
     }
     const std::shared_ptr<FileEntry>& file = dr->fileEntries[0];
@@ -295,15 +284,8 @@ bool saveDownloadResult(IOFile& fp, std::set<a2_gid_t>& metainfoCache,
     auto save = false;
     switch (dr->result) {
     case error_code::FINISHED:
-      save = dr->option->getAsBool(PREF_FORCE_SAVE);
-      break;
     case error_code::REMOVED:
-#ifdef ENABLE_BITTORRENT
-      save = !(dr->attrs.size() > CTX_ATTR_BT && dr->attrs[CTX_ATTR_BT]) &&
-             dr->option->getAsBool(PREF_FORCE_SAVE);
-#else
       save = dr->option->getAsBool(PREF_FORCE_SAVE);
-#endif
       break;
     case error_code::IN_PROGRESS:
       save = saveInProgress;

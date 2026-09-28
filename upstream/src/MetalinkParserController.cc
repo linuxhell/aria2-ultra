@@ -33,14 +33,6 @@
  */
 /* copyright --> */
 #include "MetalinkParserController.h"
-#include "uri_split.h"
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include <algorithm>
 
@@ -50,15 +42,15 @@
 #include "MetalinkMetaurl.h"
 #include "FileEntry.h"
 #include "a2functional.h"
+#include "A2STR.h"
 #include "uri.h"
 #include "Signature.h"
-#include "support/Encoding.h"
-#include "support/FilePath.h"
+#include "util.h"
 #include "Checksum.h"
 #include "ChunkChecksum.h"
 #include "MessageDigest.h"
 #ifdef ENABLE_BITTORRENT
-#  include "ProtocolDetector.h"
+#  include "magnet.h"
 #endif // ENABLE_BITTORRENT
 
 namespace aria2 {
@@ -204,8 +196,8 @@ void MetalinkParserController::setTypeOfResource(std::string type)
   if (!tResource_) {
     return;
   }
-  if (type == "sftp") {
-    tResource_->type = MetalinkResource::TYPE_SFTP;
+  if (type == "ftp" || type == "sftp") {
+    tResource_->type = MetalinkResource::TYPE_FTP;
   }
   else if (type == "http") {
     tResource_->type = MetalinkResource::TYPE_HTTP;
@@ -557,7 +549,7 @@ void MetalinkParserController::setURLOfMetaurl(std::string url)
     return;
   }
 #ifdef ENABLE_BITTORRENT
-  if (ProtocolDetector().guessTorrentMagnet(url)) {
+  if (magnet::parse(url)) {
     tMetaurl_->url = std::move(url);
   }
   else

@@ -46,9 +46,9 @@ public:
 
   virtual ~HaveEraseCommand();
 
-  virtual void preProcess() override;
+  virtual void preProcess() CXX11_OVERRIDE;
 
-  virtual void process() override;
+  virtual void process() CXX11_OVERRIDE;
 };
 
 } // namespace aria2

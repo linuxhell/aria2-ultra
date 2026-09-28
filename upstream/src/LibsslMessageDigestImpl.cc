@@ -33,19 +33,32 @@
  */
 /* copyright --> */
 
-#include "a2functional.h"
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <memory>
 #include "MessageDigestImpl.h"
 
 #include <openssl/evp.h>
 
 #include "Adler32MessageDigestImpl.h"
+#include "libssl_compat.h"
 
 namespace aria2 {
+
+#if !OPENSSL_101_API
+namespace {
+EVP_MD_CTX* EVP_MD_CTX_new() { return EVP_MD_CTX_create(); }
+} // namespace
+
+namespace {
+void EVP_MD_CTX_free(EVP_MD_CTX* ctx) { EVP_MD_CTX_destroy(ctx); }
+} // namespace
+
+namespace {
+int EVP_MD_CTX_reset(EVP_MD_CTX* ctx)
+{
+  EVP_MD_CTX_init(ctx);
+  return 1;
+}
+} // namespace
+#endif // !OPENSSL_101_API
 
 template <const EVP_MD* (*init_fn)()>
 class MessageDigestBase : public MessageDigestImpl {
@@ -59,9 +72,9 @@ public:
   virtual ~MessageDigestBase() { EVP_MD_CTX_free(ctx_); }
 
   static size_t length() { return EVP_MD_size(init_fn()); }
-  virtual size_t getDigestLength() const override { return len_; }
-  virtual void reset() override { EVP_DigestInit_ex(ctx_, md_, nullptr); }
-  virtual void update(const void* data, size_t length) override
+  virtual size_t getDigestLength() const CXX11_OVERRIDE { return len_; }
+  virtual void reset() CXX11_OVERRIDE { EVP_DigestInit_ex(ctx_, md_, nullptr); }
+  virtual void update(const void* data, size_t length) CXX11_OVERRIDE
   {
     auto bytes = reinterpret_cast<const char*>(data);
     while (length) {
@@ -71,7 +84,7 @@ public:
       bytes += l;
     }
   }
-  virtual void digest(unsigned char* md) override
+  virtual void digest(unsigned char* md) CXX11_OVERRIDE
   {
     unsigned int len;
     EVP_DigestFinal_ex(ctx_, md, &len);
@@ -93,10 +106,18 @@ std::unique_ptr<MessageDigestImpl> MessageDigestImpl::sha1()
 
 MessageDigestImpl::hashes_t MessageDigestImpl::hashes = {
     {"sha-1", make_hi<MessageDigestSHA1>()},
+#ifdef HAVE_EVP_SHA224
     {"sha-224", make_hi<MessageDigestBase<EVP_sha224>>()},
+#endif
+#ifdef HAVE_EVP_SHA224
     {"sha-256", make_hi<MessageDigestBase<EVP_sha256>>()},
+#endif
+#ifdef HAVE_EVP_SHA224
     {"sha-384", make_hi<MessageDigestBase<EVP_sha384>>()},
+#endif
+#ifdef HAVE_EVP_SHA224
     {"sha-512", make_hi<MessageDigestBase<EVP_sha512>>()},
+#endif
     {"md5", make_hi<MessageDigestMD5>()},
     ADLER32_MESSAGE_DIGEST};
 

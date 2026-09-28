@@ -33,20 +33,6 @@
  */
 /* copyright --> */
 #include "Context.h"
-#include "a2netcompat.h"
-#include "aria2/aria2.h"
-#include "error_code.h"
-#include "timegm.h"
-#include <cinttypes>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <memory>
-#include <string>
-#include <utility>
-#include "platform/SocketAddress.h"
-
-#include "ApplicationStatePath.h"
 
 #include <unistd.h>
 #include <getopt.h>
@@ -55,24 +41,19 @@
 #  include <sys/resource.h>
 #endif // HAVE_SYS_RESOURCE_H
 
-#include <algorithm>
 #include <numeric>
 #include <vector>
 #include <iostream>
 
-#include "Log.h"
-#include "support/Text.h"
-#include "support/Storage.h"
-#include "platform/Process.h"
-#include "a2functional.h"
-#include "fmt.h"
-#include "message.h"
-#include "DlAbortEx.h"
-#include "prefs.h"
+#include "LogFactory.h"
+#include "Logger.h"
+#include "util.h"
 #include "FeatureConfig.h"
 #include "MultiUrlRequestInfo.h"
 #include "SimpleRandomizer.h"
 #include "File.h"
+#include "message.h"
+#include "prefs.h"
 #include "Option.h"
 #include "a2algo.h"
 #include "a2io.h"
@@ -86,11 +67,12 @@
 #include "RecoverableException.h"
 #include "SocketCore.h"
 #include "DownloadContext.h"
+#include "fmt.h"
 #include "console.h"
 #include "UriListParser.h"
 #include "message_digest_helper.h"
 #ifdef ENABLE_BITTORRENT
-#  include "BtDownload.h"
+#  include "bittorrent_helper.h"
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_METALINK
 #  include "metalink_helper.h"
@@ -108,12 +90,8 @@ void showTorrentFile(const std::string& uri)
 {
   auto op = std::make_shared<Option>();
   auto dctx = std::make_shared<DownloadContext>();
-  auto download = BtDownload::fromFile(uri, {});
-  download->populateDownloadContext(dctx, op.get());
-  util::toStream(std::begin(dctx->getFileEntries()),
-                 std::end(dctx->getFileEntries()), *global::cout());
-  global::cout()->write("\n");
-  global::cout()->flush();
+  bittorrent::load(uri, dctx, op);
+  bittorrent::print(*global::cout(), dctx);
 }
 } // namespace
 #endif // ENABLE_BITTORRENT
@@ -186,22 +164,26 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
       throw DL_ABORT_EX("Option processing failed");
     }
   }
-  logging::Settings logSettings;
-  logSettings.file = op->get(PREF_LOG);
-  logSettings.maxFileSize = op->getAsLLInt(PREF_LOG_MAX_SIZE);
-  logSettings.maxFiles = op->getAsInt(PREF_LOG_MAX_FILES);
-  logSettings.fileLevel = logging::parseLevel(op->get(PREF_LOG_LEVEL));
-  logSettings.consoleLevel =
-      logging::parseLevel(op->get(PREF_CONSOLE_LOG_LEVEL));
-  logSettings.consoleOutput = standalone && !op->getAsBool(PREF_QUIET);
-  logSettings.colorOutput = op->getAsBool(PREF_ENABLE_COLOR);
-  logSettings.consoleToStderr = standalone && op->getAsBool(PREF_STDERR);
-  logging::configure(logSettings);
-  auto compiler = usedCompilerAndPlatform();
-  std::replace(compiler.begin(), compiler.end(), '\n', ' ');
-  A2_LOG_DEBUG(fmt("%s %s | %s | %s | %s", PACKAGE, PACKAGE_VERSION,
-                   compiler.c_str(), getOperatingSystemInfo().c_str(),
-                   usedLibs().c_str()));
+#ifdef ENABLE_BITTORRENT
+  bittorrent::generateStaticPeerId(op->get(PREF_PEER_ID_PREFIX));
+  bittorrent::generateStaticPeerAgent(op->get(PREF_PEER_AGENT));
+#endif // ENABLE_BITTORRENT
+  LogFactory::setLogFile(op->get(PREF_LOG));
+  LogFactory::setLogLevel(op->get(PREF_LOG_LEVEL));
+  LogFactory::setConsoleLogLevel(op->get(PREF_CONSOLE_LOG_LEVEL));
+  LogFactory::setColorOutput(op->getAsBool(PREF_ENABLE_COLOR));
+  if (op->getAsBool(PREF_QUIET)) {
+    LogFactory::setConsoleOutput(false);
+  }
+  LogFactory::reconfigure();
+  A2_LOG_INFO("<<--- --- --- ---");
+  A2_LOG_INFO("  --- --- --- ---");
+  A2_LOG_INFO("  --- --- --- --->>");
+  A2_LOG_INFO(fmt("%s %s", PACKAGE, PACKAGE_VERSION));
+  A2_LOG_INFO(usedCompilerAndPlatform());
+  A2_LOG_INFO(getOperatingSystemInfo());
+  A2_LOG_INFO(usedLibs());
+  A2_LOG_INFO(MSG_LOGGING_STARTED);
 
 #if defined(HAVE_SYS_RESOURCE_H) && defined(RLIMIT_NOFILE)
   rlimit r = {0, 0};
@@ -224,13 +206,13 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
                         util::safeStrerror(errNum).c_str()));
       }
       else {
-        A2_LOG_TRACE(fmt("Set rlimit NO_FILE from %" PRIu64 " to %" PRIu64,
+        A2_LOG_DEBUG(fmt("Set rlimit NO_FILE from %" PRIu64 " to %" PRIu64,
                          (uint64_t)r.rlim_cur, (uint64_t)rlim_new));
       }
     }
     else {
       rlim_new = op->getAsInt(PREF_RLIMIT_NOFILE);
-      A2_LOG_TRACE(fmt("Not setting rlimit NO_FILE: %" PRIu64 " >= %" PRIu64,
+      A2_LOG_DEBUG(fmt("Not setting rlimit NO_FILE: %" PRIu64 " >= %" PRIu64,
                        (uint64_t)r.rlim_cur, (uint64_t)rlim_new));
     }
   }
@@ -319,15 +301,14 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
   op->remove(PREF_CHECKSUM);
   op->remove(PREF_GID);
 
-  const auto hasEd2kDatabase = File(state::ed2kDatabaseFile(op.get())).isFile();
   if (standalone && !op->getAsBool(PREF_ENABLE_RPC) && requestGroups.empty() &&
-      !uriListParser && !hasEd2kDatabase) {
+      !uriListParser) {
     global::cout()->printf("%s\n", MSG_NO_FILES_TO_DOWNLOAD);
   }
   else {
     if (!requestGroups.empty()) {
-      A2_LOG_INFO(fmt("Downloading %" PRId64 " item(s)",
-                      static_cast<uint64_t>(requestGroups.size())));
+      A2_LOG_NOTICE(fmt("Downloading %" PRId64 " item(s)",
+                        static_cast<uint64_t>(requestGroups.size())));
     }
     reqinfo = std::make_shared<MultiUrlRequestInfo>(std::move(requestGroups),
                                                     op, uriListParser);

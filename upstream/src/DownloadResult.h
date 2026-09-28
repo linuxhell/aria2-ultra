@@ -46,11 +46,6 @@
 #include "error_code.h"
 #include "RequestGroup.h"
 #include "ContextAttribute.h"
-#include "media/MediaDownload.h"
-#ifdef ENABLE_BITTORRENT
-#  include "BtSnapshot.h"
-#  include "BtStateStore.h"
-#endif
 
 namespace aria2 {
 
@@ -59,7 +54,6 @@ class FileEntry;
 class MetadataInfo;
 
 struct DownloadResult {
-  media::Snapshot mediaSnapshot;
   // This field contains GID. See comment in
   // RequestGroup.cc::belongsToGID_.
   a2_gid_t belongsTo;
@@ -84,8 +78,6 @@ struct DownloadResult {
 
   std::vector<std::shared_ptr<FileEntry>> fileEntries;
 
-  std::vector<int64_t> fileCompletedLengths;
-
   // This field contains GIDs. See comment in
   // RequestGroup.cc::followedByGIDs_.
   std::vector<a2_gid_t> followedBy;
@@ -96,11 +88,6 @@ struct DownloadResult {
   std::string bitfield;
 
   std::string infoHash;
-
-#ifdef ENABLE_BITTORRENT
-  BtSnapshot btSnapshot;
-  BtStateReference btState;
-#endif
 
   std::string dir;
 

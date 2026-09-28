@@ -33,16 +33,15 @@
  */
 /* copyright --> */
 #include "SeedCheckCommand.h"
-#include "Command.h"
-#include <chrono>
-#include <memory>
-#include <utility>
 #include "DownloadEngine.h"
+#include "BtRuntime.h"
 #include "PieceStorage.h"
-#include "Log.h"
+#include "Logger.h"
+#include "LogFactory.h"
 #include "SeedCriteria.h"
 #include "message.h"
 #include "RequestGroup.h"
+#include "fmt.h"
 
 namespace aria2 {
 
@@ -63,7 +62,7 @@ SeedCheckCommand::~SeedCheckCommand() { requestGroup_->decreaseNumCommand(); }
 
 bool SeedCheckCommand::execute()
 {
-  if (requestGroup_->isHaltRequested()) {
+  if (btRuntime_->isHalt()) {
     return true;
   }
   if (!seedCriteria_.get()) {
@@ -77,14 +76,17 @@ bool SeedCheckCommand::execute()
   }
   if (checkStarted_) {
     if (seedCriteria_->evaluate()) {
-      A2_LOG_INFO(MSG_SEEDING_END);
-      requestGroup_->setForceHaltRequested(true, RequestGroup::SHARE_COMPLETE);
-      e_->setRefreshInterval(std::chrono::milliseconds(0));
-      return true;
+      A2_LOG_NOTICE(MSG_SEEDING_END);
+      btRuntime_->setHalt(true);
     }
   }
   e_->addCommand(std::unique_ptr<Command>(this));
   return false;
+}
+
+void SeedCheckCommand::setBtRuntime(const std::shared_ptr<BtRuntime>& btRuntime)
+{
+  btRuntime_ = btRuntime;
 }
 
 void SeedCheckCommand::setPieceStorage(

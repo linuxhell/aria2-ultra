@@ -33,8 +33,6 @@
  */
 /* copyright --> */
 #include "prefs.h"
-#include <cstddef>
-#include <string>
 
 #include <cassert>
 #include <vector>
@@ -128,25 +126,30 @@ const std::string A2_V_GEOM("geom");
 const std::string V_PREALLOC("prealloc");
 const std::string V_FALLOC("falloc");
 const std::string V_TRUNC("trunc");
-const std::string V_TRACE("trace");
 const std::string V_DEBUG("debug");
 const std::string V_INFO("info");
+const std::string V_NOTICE("notice");
 const std::string V_WARN("warn");
 const std::string V_ERROR("error");
 const std::string V_INORDER("inorder");
 const std::string A2_V_RANDOM("random");
+const std::string V_FEEDBACK("feedback");
+const std::string V_ADAPTIVE("adaptive");
+const std::string V_LIBUV("libuv");
 const std::string V_EPOLL("epoll");
 const std::string V_KQUEUE("kqueue");
+const std::string V_PORT("port");
 const std::string V_POLL("poll");
 const std::string V_SELECT("select");
+const std::string V_BINARY("binary");
+const std::string V_ASCII("ascii");
+const std::string V_GET("get");
+const std::string V_TUNNEL("tunnel");
+const std::string V_PLAIN("plain");
+const std::string V_ARC4("arc4");
 const std::string V_HTTP("http");
 const std::string V_HTTPS("https");
-const std::string V_PREFERRED("preferred");
-const std::string V_DISABLED("disabled");
-const std::string V_REQUIRED("required");
-const std::string V_TCP("tcp");
-const std::string V_UTP("utp");
-const std::string V_BOTH("both");
+const std::string V_FTP("ftp");
 const std::string A2_V_TLS11("TLSv1.1");
 const std::string A2_V_TLS12("TLSv1.2");
 const std::string A2_V_TLS13("TLSv1.3");
@@ -166,20 +169,15 @@ PrefPtr PREF_CONNECT_TIMEOUT = makePref("connect-timeout");
 // values: 1*digit
 PrefPtr PREF_MAX_TRIES = makePref("max-tries");
 // values: 1*digit
-PrefPtr PREF_STATE_SAVE_INTERVAL = makePref("state-save-interval");
+PrefPtr PREF_AUTO_SAVE_INTERVAL = makePref("auto-save-interval");
 // values: a string that your file system recognizes as a file name.
 PrefPtr PREF_LOG = makePref("log");
-// values: 1*digit
-PrefPtr PREF_LOG_MAX_SIZE = makePref("log-max-size");
-// values: 1*digit
-PrefPtr PREF_LOG_MAX_FILES = makePref("log-max-files");
 // values: a string that your file system recognizes as a directory.
 PrefPtr PREF_DIR = makePref("dir");
 // values: a string that your file system recognizes as a file name.
 PrefPtr PREF_OUT = makePref("out");
-PrefPtr PREF_FILENAME_HINT = makePref("filename-hint");
-PrefPtr PREF_FILENAME_HINT_SOURCE = makePref("filename-hint-source");
 // values: 1*digit
+PrefPtr PREF_SPLIT = makePref("split");
 // value: true | false
 PrefPtr PREF_DAEMON = makePref("daemon");
 // value: a string
@@ -194,6 +192,7 @@ PrefPtr PREF_MAX_OVERALL_DOWNLOAD_LIMIT =
 // value: 1*digit
 PrefPtr PREF_MAX_DOWNLOAD_LIMIT = makePref("max-download-limit");
 // value: 1*digit
+PrefPtr PREF_STARTUP_IDLE_TIME = makePref("startup-idle-time");
 // value: prealloc | fallc | none
 PrefPtr PREF_FILE_ALLOCATION = makePref("file-allocation");
 // value: 1*digit
@@ -234,6 +233,7 @@ PrefPtr PREF_AUTO_FILE_RENAMING = makePref("auto-file-renaming");
 // value: true | false
 PrefPtr PREF_PARAMETERIZED_URI = makePref("parameterized-uri");
 // value: true | false
+PrefPtr PREF_ALLOW_PIECE_LENGTH_CHANGE = makePref("allow-piece-length-change");
 // value: true | false
 PrefPtr PREF_NO_CONF = makePref("no-conf");
 // value: string
@@ -242,12 +242,22 @@ PrefPtr PREF_CONF_PATH = makePref("conf-path");
 PrefPtr PREF_STOP = makePref("stop");
 // value: true | false
 PrefPtr PREF_QUIET = makePref("quiet");
+// value: true | false
+PrefPtr PREF_ASYNC_DNS = makePref("async-dns");
 // value: 1*digit
 PrefPtr PREF_SUMMARY_INTERVAL = makePref("summary-interval");
-// value: trace, debug, info, warn, error
+// value: debug, info, notice, warn, error
 PrefPtr PREF_LOG_LEVEL = makePref("log-level");
-// value: trace, debug, info, warn, error
+// value: debug, info, notice, warn, error
 PrefPtr PREF_CONSOLE_LOG_LEVEL = makePref("console-log-level");
+// value: inorder | feedback | adaptive
+PrefPtr PREF_URI_SELECTOR = makePref("uri-selector");
+// value: 1*digit
+PrefPtr PREF_SERVER_STAT_TIMEOUT = makePref("server-stat-timeout");
+// value: string that your file system recognizes as a file name.
+PrefPtr PREF_SERVER_STAT_IF = makePref("server-stat-if");
+// value: string that your file system recognizes as a file name.
+PrefPtr PREF_SERVER_STAT_OF = makePref("server-stat-of");
 // value: true | false
 PrefPtr PREF_REMOTE_TIME = makePref("remote-time");
 // value: 1*digit
@@ -259,6 +269,9 @@ PrefPtr PREF_ENABLE_RPC = makePref("enable-rpc");
 // value: 1*digit
 PrefPtr PREF_RPC_LISTEN_PORT = makePref("rpc-listen-port");
 // value: string
+PrefPtr PREF_RPC_USER = makePref("rpc-user");
+// value: string
+PrefPtr PREF_RPC_PASSWD = makePref("rpc-passwd");
 // value: 1*digit
 PrefPtr PREF_RPC_MAX_REQUEST_SIZE = makePref("rpc-max-request-size");
 // value: true | false
@@ -275,6 +288,8 @@ PrefPtr PREF_RPC_SECURE = makePref("rpc-secure");
 PrefPtr PREF_RPC_SAVE_UPLOAD_METADATA = makePref("rpc-save-upload-metadata");
 // value: true | false
 PrefPtr PREF_DRY_RUN = makePref("dry-run");
+// value: true | false
+PrefPtr PREF_REUSE_URI = makePref("reuse-uri");
 // value: string
 PrefPtr PREF_ON_DOWNLOAD_START = makePref("on-download-start");
 PrefPtr PREF_ON_DOWNLOAD_PAUSE = makePref("on-download-pause");
@@ -290,34 +305,33 @@ PrefPtr PREF_DISABLE_IPV6 = makePref("disable-ipv6");
 // value: true | false
 PrefPtr PREF_HUMAN_READABLE = makePref("human-readable");
 // value: true | false
+PrefPtr PREF_REMOVE_CONTROL_FILE = makePref("remove-control-file");
+// value: true | false
+PrefPtr PREF_ALWAYS_RESUME = makePref("always-resume");
+// value: 1*digit
+PrefPtr PREF_MAX_RESUME_FAILURE_TRIES = makePref("max-resume-failure-tries");
 // value: string that your file system recognizes as a file name.
 PrefPtr PREF_SAVE_SESSION = makePref("save-session");
 // value: 1*digit
+PrefPtr PREF_MAX_CONNECTION_PER_SERVER = makePref("max-connection-per-server");
 // value: 1*digit
-PrefPtr PREF_ED2K_MIN_SPLIT_SIZE = makePref("ed2k-min-split-size");
+PrefPtr PREF_MIN_SPLIT_SIZE = makePref("min-split-size");
 // value: true | false
+PrefPtr PREF_CONDITIONAL_GET = makePref("conditional-get");
 // value: true | false
+PrefPtr PREF_SELECT_LEAST_USED_HOST = makePref("select-least-used-host");
+// value: true | false
+PrefPtr PREF_ENABLE_ASYNC_DNS6 = makePref("enable-async-dns6");
 // value: 1*digit
 PrefPtr PREF_MAX_DOWNLOAD_RESULT = makePref("max-download-result");
 // value: 1*digit
 PrefPtr PREF_RETRY_WAIT = makePref("retry-wait");
-PrefPtr PREF_STREAM_MAX_CONNECTIONS = makePref("stream-max-connections");
-PrefPtr PREF_STREAM_MAX_RANGE_SIZE = makePref("stream-max-range-size");
-PrefPtr PREF_MEDIA = makePref("media");
-PrefPtr PREF_MEDIA_FORMAT = makePref("media-format");
-PrefPtr PREF_MEDIA_VIDEO = makePref("media-video");
-PrefPtr PREF_MEDIA_AUDIO = makePref("media-audio");
-PrefPtr PREF_MEDIA_SUBTITLES = makePref("media-subtitles");
-PrefPtr PREF_MEDIA_PAUSE_AFTER_PROBE = makePref("media-pause-after-probe");
-PrefPtr PREF_MEDIA_RECORD_TIME = makePref("media-record-time");
-PrefPtr PREF_MEDIA_REQUEST_CONTEXTS = makePref("media-request-contexts");
-PrefPtr PREF_MEDIA_INPUT = makePref("media-input");
-PrefPtr PREF_MEDIA_START_TIME = makePref("media-start-time");
-PrefPtr PREF_MEDIA_END_TIME = makePref("media-end-time");
+// value: string
+PrefPtr PREF_ASYNC_DNS_SERVER = makePref("async-dns-server");
 // value: true | false
 PrefPtr PREF_SHOW_CONSOLE_READOUT = makePref("show-console-readout");
 // value: default | inorder
-PrefPtr PREF_ED2K_PIECE_SELECTOR = makePref("ed2k-piece-selector");
+PrefPtr PREF_STREAM_PIECE_SELECTOR = makePref("stream-piece-selector");
 // value: true | false
 PrefPtr PREF_TRUNCATE_CONSOLE_READOUT = makePref("truncate-console-readout");
 // value: true | false
@@ -338,24 +352,6 @@ PrefPtr PREF_FORCE_SAVE = makePref("force-save");
 PrefPtr PREF_SAVE_NOT_FOUND = makePref("save-not-found");
 // value: 1*digit
 PrefPtr PREF_DISK_CACHE = makePref("disk-cache");
-// value: path to persistent application state directory
-PrefPtr PREF_STATE_DIR = makePref("state-dir");
-// value: host:port[,host:port]
-PrefPtr PREF_ED2K_SERVER = makePref("ed2k-server");
-// value: path to server.met
-PrefPtr PREF_ED2K_SERVER_LIST = makePref("ed2k-server-list");
-// value: path to nodes.dat
-PrefPtr PREF_ED2K_NODE_LIST = makePref("ed2k-node-list");
-// value: 0-65535
-PrefPtr PREF_ED2K_LISTEN_PORT = makePref("ed2k-listen-port");
-// value: 0-65535
-PrefPtr PREF_ED2K_UDP_LISTEN_PORT = makePref("ed2k-udp-listen-port");
-// value: 1*digit
-PrefPtr PREF_ED2K_UPLOAD_SLOTS = makePref("ed2k-upload-slots");
-
-PrefPtr PREF_ED2K_MAX_CONNECTIONS = makePref("ed2k-max-connections");
-// value: true | false
-PrefPtr PREF_ED2K_PREVIEW_PRIORITY = makePref("ed2k-preview-priority");
 // value: string
 PrefPtr PREF_GID = makePref("gid");
 // values: 1*digit
@@ -381,9 +377,19 @@ PrefPtr PREF_STDERR = makePref("stderr");
 PrefPtr PREF_KEEP_UNFINISHED_DOWNLOAD_RESULT =
     makePref("keep-unfinished-download-result");
 
-PrefPtr PREF_SFTP_USER = makePref("sftp-user");
-PrefPtr PREF_SFTP_PASSWD = makePref("sftp-passwd");
-PrefPtr PREF_SSH_HOST_KEY_SHA256 = makePref("ssh-host-key-sha256");
+/**
+ * FTP related preferences
+ */
+PrefPtr PREF_FTP_USER = makePref("ftp-user");
+PrefPtr PREF_FTP_PASSWD = makePref("ftp-passwd");
+// values: binary | ascii
+PrefPtr PREF_FTP_TYPE = makePref("ftp-type");
+// values: true | false
+PrefPtr PREF_FTP_PASV = makePref("ftp-pasv");
+// values: true | false
+PrefPtr PREF_FTP_REUSE_CONNECTION = makePref("ftp-reuse-connection");
+// values: hashType=digest
+PrefPtr PREF_SSH_HOST_KEY_MD = makePref("ssh-host-key-md");
 
 /**
  * HTTP related preferences
@@ -399,6 +405,9 @@ PrefPtr PREF_SAVE_COOKIES = makePref("save-cookies");
 // values: true | false
 PrefPtr PREF_ENABLE_HTTP_KEEP_ALIVE = makePref("enable-http-keep-alive");
 // values: true | false
+PrefPtr PREF_ENABLE_HTTP_PIPELINING = makePref("enable-http-pipelining");
+// value: 1*digit
+PrefPtr PREF_MAX_HTTP_PIPELINING = makePref("max-http-pipelining");
 // value: string
 PrefPtr PREF_HEADER = makePref("header");
 // value: string that your file system recognizes as a file name.
@@ -410,30 +419,48 @@ PrefPtr PREF_CA_CERTIFICATE = makePref("ca-certificate");
 // value: true | false
 PrefPtr PREF_CHECK_CERTIFICATE = makePref("check-certificate");
 // value: true | false
+PrefPtr PREF_USE_HEAD = makePref("use-head");
+// value: true | false
+PrefPtr PREF_HTTP_AUTH_CHALLENGE = makePref("http-auth-challenge");
 // value: true | false
 PrefPtr PREF_HTTP_NO_CACHE = makePref("http-no-cache");
 // value: true | false
 PrefPtr PREF_HTTP_ACCEPT_GZIP = makePref("http-accept-gzip");
 // value: true | false
+PrefPtr PREF_CONTENT_DISPOSITION_DEFAULT_UTF8 =
+    makePref("content-disposition-default-utf8");
+// value: true | false
+PrefPtr PREF_NO_WANT_DIGEST_HEADER = makePref("no-want-digest-header");
 
 /**
  * Proxy related preferences
  */
 PrefPtr PREF_HTTP_PROXY = makePref("http-proxy");
 PrefPtr PREF_HTTPS_PROXY = makePref("https-proxy");
+PrefPtr PREF_FTP_PROXY = makePref("ftp-proxy");
 PrefPtr PREF_ALL_PROXY = makePref("all-proxy");
 // values: comma separated hostname or domain
 PrefPtr PREF_NO_PROXY = makePref("no-proxy");
+// values: get | tunnel
+PrefPtr PREF_PROXY_METHOD = makePref("proxy-method");
 PrefPtr PREF_HTTP_PROXY_USER = makePref("http-proxy-user");
 PrefPtr PREF_HTTP_PROXY_PASSWD = makePref("http-proxy-passwd");
 PrefPtr PREF_HTTPS_PROXY_USER = makePref("https-proxy-user");
 PrefPtr PREF_HTTPS_PROXY_PASSWD = makePref("https-proxy-passwd");
+PrefPtr PREF_FTP_PROXY_USER = makePref("ftp-proxy-user");
+PrefPtr PREF_FTP_PROXY_PASSWD = makePref("ftp-proxy-passwd");
 PrefPtr PREF_ALL_PROXY_USER = makePref("all-proxy-user");
 PrefPtr PREF_ALL_PROXY_PASSWD = makePref("all-proxy-passwd");
 
 /**
  * BitTorrent related preferences
  */
+// values: 1*digit
+PrefPtr PREF_PEER_CONNECTION_TIMEOUT = makePref("peer-connection-timeout");
+// values: 1*digit
+PrefPtr PREF_BT_TIMEOUT = makePref("bt-timeout");
+// values: 1*digit
+PrefPtr PREF_BT_REQUEST_TIMEOUT = makePref("bt-request-timeout");
 // values: true | false
 PrefPtr PREF_SHOW_FILES = makePref("show-files");
 // values: 1*digit
@@ -452,88 +479,80 @@ PrefPtr PREF_SELECT_FILE = makePref("select-file");
 PrefPtr PREF_SEED_TIME = makePref("seed-time");
 // values: 1*digit ['.' [ 1*digit ] ]
 PrefPtr PREF_SEED_RATIO = makePref("seed-ratio");
+// values: 1*digit
+PrefPtr PREF_BT_KEEP_ALIVE_INTERVAL = makePref("bt-keep-alive-interval");
+// values: a string, less than or equals to 20 bytes length
+PrefPtr PREF_PEER_ID_PREFIX = makePref("peer-id-prefix");
+// values: a string representing the extended BT handshake peer user agent
+PrefPtr PREF_PEER_AGENT = makePref("peer-agent");
 // values: true | false
 PrefPtr PREF_ENABLE_PEER_EXCHANGE = makePref("enable-peer-exchange");
 // values: true | false
 PrefPtr PREF_ENABLE_DHT = makePref("enable-dht");
-// values: enabled | required | disabled
-PrefPtr PREF_BT_ENCRYPTION = makePref("bt-encryption");
-// values: tcp | utp | both
-PrefPtr PREF_BT_TRANSPORT = makePref("bt-transport");
-// values: HOST:PORT[,HOST:PORT...]
-PrefPtr PREF_BT_DHT_BOOTSTRAP_NODES = makePref("bt-dht-bootstrap-nodes");
+// values: a string
+PrefPtr PREF_DHT_LISTEN_ADDR = makePref("dht-listen-addr");
 // values: 1*digit
-PrefPtr PREF_BT_MAX_CONNECTIONS = makePref("bt-max-connections");
-PrefPtr PREF_BT_MAX_UPLOADS = makePref("bt-max-uploads");
-// values: URI
-PrefPtr PREF_BT_PROXY = makePref("bt-proxy");
+PrefPtr PREF_DHT_LISTEN_PORT = makePref("dht-listen-port");
+// values: a string
+PrefPtr PREF_DHT_ENTRY_POINT_HOST = makePref("dht-entry-point-host");
+// values: 1*digit
+PrefPtr PREF_DHT_ENTRY_POINT_PORT = makePref("dht-entry-point-port");
+// values: a string  = makePref(hostname:port);
+PrefPtr PREF_DHT_ENTRY_POINT = makePref("dht-entry-point");
+// values: a string
+PrefPtr PREF_DHT_FILE_PATH = makePref("dht-file-path");
 // values: true | false
-PrefPtr PREF_BT_PORT_MAPPING = makePref("bt-port-mapping");
+PrefPtr PREF_ENABLE_DHT6 = makePref("enable-dht6");
+// values: a string
+PrefPtr PREF_DHT_LISTEN_ADDR6 = makePref("dht-listen-addr6");
+// values: a string
+PrefPtr PREF_DHT_ENTRY_POINT_HOST6 = makePref("dht-entry-point-host6");
+// values: 1*digit
+PrefPtr PREF_DHT_ENTRY_POINT_PORT6 = makePref("dht-entry-point-port6");
+// values: a string  = makePref(hostname:port)
+PrefPtr PREF_DHT_ENTRY_POINT6 = makePref("dht-entry-point6");
+// values: a string
+PrefPtr PREF_DHT_FILE_PATH6 = makePref("dht-file-path6");
+// values: plain | arc4
+PrefPtr PREF_BT_MIN_CRYPTO_LEVEL = makePref("bt-min-crypto-level");
+// values:: true | false
+PrefPtr PREF_BT_REQUIRE_CRYPTO = makePref("bt-require-crypto");
+// values: 1*digit
+PrefPtr PREF_BT_REQUEST_PEER_SPEED_LIMIT =
+    makePref("bt-request-peer-speed-limit");
 // values: 1*digit
 PrefPtr PREF_BT_MAX_OPEN_FILES = makePref("bt-max-open-files");
-PrefPtr PREF_BT_IO_THREADS = makePref("bt-io-threads");
-PrefPtr PREF_BT_HASHING_THREADS = makePref("bt-hashing-threads");
-PrefPtr PREF_BT_CONNECTION_SPEED = makePref("bt-connection-speed");
-PrefPtr PREF_BT_MAX_OUT_REQUEST_QUEUE = makePref("bt-max-out-request-queue");
-PrefPtr PREF_BT_MAX_IN_REQUEST_QUEUE = makePref("bt-max-in-request-queue");
-PrefPtr PREF_BT_DISK_QUEUE_SIZE = makePref("bt-disk-queue-size");
-PrefPtr PREF_BT_DISK_IO = makePref("bt-disk-io");
-PrefPtr PREF_BT_DISK_READ_CACHE = makePref("bt-disk-read-cache");
-PrefPtr PREF_BT_DISK_WRITE_CACHE = makePref("bt-disk-write-cache");
-PrefPtr PREF_BT_CHECKING_MEMORY = makePref("bt-checking-memory");
-PrefPtr PREF_BT_PIECE_EXTENT_AFFINITY = makePref("bt-piece-extent-affinity");
-PrefPtr PREF_BT_PEER_TURNOVER = makePref("bt-peer-turnover");
-PrefPtr PREF_BT_PEER_TURNOVER_CUTOFF = makePref("bt-peer-turnover-cutoff");
-PrefPtr PREF_BT_PEER_TURNOVER_INTERVAL = makePref("bt-peer-turnover-interval");
-PrefPtr PREF_BT_MIXED_MODE = makePref("bt-mixed-mode");
-PrefPtr PREF_BT_UPLOAD_SLOT_ALGORITHM = makePref("bt-upload-slot-algorithm");
-PrefPtr PREF_BT_SEED_CHOKING_ALGORITHM = makePref("bt-seed-choking-algorithm");
-PrefPtr PREF_BT_SEND_BUFFER_LOW_WATERMARK =
-    makePref("bt-send-buffer-low-watermark");
-PrefPtr PREF_BT_SEND_BUFFER_WATERMARK = makePref("bt-send-buffer-watermark");
-PrefPtr PREF_BT_SEND_BUFFER_WATERMARK_FACTOR =
-    makePref("bt-send-buffer-watermark-factor");
-PrefPtr PREF_BT_SEEDING_OUTGOING_CONNECTIONS =
-    makePref("bt-seeding-outgoing-connections");
-PrefPtr PREF_BT_RATE_LIMIT_OVERHEAD = makePref("bt-rate-limit-overhead");
-PrefPtr PREF_BT_STOP_TRACKER_TIMEOUT = makePref("bt-stop-tracker-timeout");
-PrefPtr PREF_BT_BLOCKLIST_SCOPE = makePref("bt-blocklist-scope");
-PrefPtr PREF_BT_RESUME_SAVE_INTERVAL = makePref("bt-resume-save-interval");
-PrefPtr PREF_BT_UPLOAD_SUGGESTIONS = makePref("bt-upload-suggestions");
-PrefPtr PREF_BT_FILE_PRIORITY = makePref("bt-file-priority");
-PrefPtr PREF_BT_MAX_CONCURRENT_HTTP_ANNOUNCES =
-    makePref("bt-max-concurrent-http-announces");
-PrefPtr PREF_BT_ANNOUNCE_ALL_TIERS = makePref("bt-announce-all-tiers");
-PrefPtr PREF_BT_ANNOUNCE_ALL_TRACKERS = makePref("bt-announce-all-trackers");
-PrefPtr PREF_BT_USER_AGENT = makePref("bt-user-agent");
-PrefPtr PREF_BT_PEER_ID_PREFIX = makePref("bt-peer-id-prefix");
-PrefPtr PREF_BT_ANONYMOUS_MODE = makePref("bt-anonymous-mode");
 // values: true | false
 PrefPtr PREF_BT_SEED_UNVERIFIED = makePref("bt-seed-unverified");
+// values: true | false
+PrefPtr PREF_BT_HASH_CHECK_SEED = makePref("bt-hash-check-seed");
 // values: 1*digit
 PrefPtr PREF_BT_MAX_PEERS = makePref("bt-max-peers");
-PrefPtr PREF_BT_MAX_UPLOADS_PER_TORRENT =
-    makePref("bt-max-uploads-per-torrent");
-PrefPtr PREF_BT_FIRST_LAST_PIECE_FIRST = makePref("bt-first-last-piece-first");
-PrefPtr PREF_BT_SUPER_SEEDING = makePref("bt-super-seeding");
-// values: a string (file path)
-PrefPtr PREF_BT_PEER_BLOCKLIST = makePref("bt-peer-blocklist");
 // values: a string  = makePref(IP address)
 PrefPtr PREF_BT_EXTERNAL_IP = makePref("bt-external-ip");
-// values: 1*digit
-PrefPtr PREF_BT_EXTERNAL_PORT = makePref("bt-external-port");
 // values: 1*digit '=' a string that your file system recognizes as a file name.
 PrefPtr PREF_INDEX_OUT = makePref("index-out");
+// values: 1*digit
+PrefPtr PREF_BT_TRACKER_INTERVAL = makePref("bt-tracker-interval");
+// values: 1*digit
+PrefPtr PREF_BT_STOP_TIMEOUT = makePref("bt-stop-timeout");
+// values: head[=SIZE]|tail[=SIZE], ...
+PrefPtr PREF_BT_PRIORITIZE_PIECE = makePref("bt-prioritize-piece");
+// values: true | false
+PrefPtr PREF_BT_SAVE_METADATA = makePref("bt-save-metadata");
+// values: true | false
+PrefPtr PREF_BT_METADATA_ONLY = makePref("bt-metadata-only");
 // values: true | false
 PrefPtr PREF_BT_ENABLE_LPD = makePref("bt-enable-lpd");
+// values: string
+PrefPtr PREF_BT_LPD_INTERFACE = makePref("bt-lpd-interface");
 // values: 1*digit
-PrefPtr PREF_BT_TRACKER_COMPLETION_TIMEOUT =
-    makePref("bt-tracker-completion-timeout");
+PrefPtr PREF_BT_TRACKER_TIMEOUT = makePref("bt-tracker-timeout");
 // values: 1*digit
-PrefPtr PREF_BT_TRACKER_RECEIVE_TIMEOUT =
-    makePref("bt-tracker-receive-timeout");
-// values: interface name or numeric IP address list
-PrefPtr PREF_BT_INTERFACE = makePref("bt-interface");
+PrefPtr PREF_BT_TRACKER_CONNECT_TIMEOUT =
+    makePref("bt-tracker-connect-timeout");
+// values: 1*digit
+PrefPtr PREF_DHT_MESSAGE_TIMEOUT = makePref("dht-message-timeout");
 // values: string
 PrefPtr PREF_ON_BT_DOWNLOAD_COMPLETE = makePref("on-bt-download-complete");
 // values: string
@@ -541,7 +560,14 @@ PrefPtr PREF_BT_TRACKER = makePref("bt-tracker");
 // values: string
 PrefPtr PREF_BT_EXCLUDE_TRACKER = makePref("bt-exclude-tracker");
 // values: true | false
-PrefPtr PREF_DETACH_SHARE_ONLY = makePref("detach-share-only");
+PrefPtr PREF_BT_REMOVE_UNSELECTED_FILE = makePref("bt-remove-unselected-file");
+PrefPtr PREF_BT_DETACH_SEED_ONLY = makePref("bt-detach-seed-only");
+PrefPtr PREF_BT_FORCE_ENCRYPTION = makePref("bt-force-encryption");
+// values: true | false
+PrefPtr PREF_BT_ENABLE_HOOK_AFTER_HASH_CHECK =
+    makePref("bt-enable-hook-after-hash-check");
+// values: true | false
+PrefPtr PREF_BT_LOAD_SAVED_METADATA = makePref("bt-load-saved-metadata");
 
 /**
  * Metalink related preferences
@@ -558,7 +584,7 @@ PrefPtr PREF_METALINK_OS = makePref("metalink-os");
 PrefPtr PREF_METALINK_LOCATION = makePref("metalink-location");
 // values: true | false | mem
 PrefPtr PREF_FOLLOW_METALINK = makePref("follow-metalink");
-// values: http | https | none
+// values: http | https | ftp | none
 PrefPtr PREF_METALINK_PREFERRED_PROTOCOL =
     makePref("metalink-preferred-protocol");
 // values: true | false

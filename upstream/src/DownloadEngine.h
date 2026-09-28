@@ -39,6 +39,7 @@
 
 #include <string>
 #include <deque>
+#include <map>
 #include <vector>
 #include <memory>
 
@@ -49,6 +50,9 @@
 #include "FileAllocationMan.h"
 #include "CheckIntegrityMan.h"
 #include "DNSCache.h"
+#ifdef ENABLE_ASYNC_DNS
+#  include "AsyncNameResolver.h"
+#endif // ENABLE_ASYNC_DNS
 
 namespace aria2 {
 
@@ -56,12 +60,13 @@ class Option;
 class RequestGroupMan;
 class StatCalc;
 class SocketCore;
-class CurlSession;
-class SystemResolver;
+class CookieStorage;
+class AuthConfigFactory;
+class Request;
 class EventPoll;
 class Command;
 #ifdef ENABLE_BITTORRENT
-class BtSession;
+class BtRegistry;
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_WEBSOCKET
 namespace rpc {
@@ -88,22 +93,53 @@ private:
 
   int haltRequested_;
 
+  class SocketPoolEntry {
+  private:
+    std::shared_ptr<SocketCore> socket_;
+    // protocol specific option string
+    std::string options_;
+
+    std::chrono::seconds timeout_;
+
+    Timer registeredTime_;
+
+  public:
+    SocketPoolEntry(const std::shared_ptr<SocketCore>& socket,
+                    const std::string& option, std::chrono::seconds timeout);
+
+    SocketPoolEntry(const std::shared_ptr<SocketCore>& socket,
+                    std::chrono::seconds timeout);
+
+    ~SocketPoolEntry();
+
+    bool isTimeout() const;
+
+    const std::shared_ptr<SocketCore>& getSocket() const { return socket_; }
+
+    const std::string& getOptions() const { return options_; }
+  };
+
+  // key = IP address:port, value = SocketPoolEntry
+  std::multimap<std::string, SocketPoolEntry> socketPool_;
+
+  Timer lastSocketPoolScan_;
+
   bool noWait_;
 
   std::chrono::milliseconds refreshInterval_;
   Timer lastRefresh_;
 
+  std::unique_ptr<CookieStorage> cookieStorage_;
+
 #ifdef ENABLE_BITTORRENT
-  std::unique_ptr<BtSession> btSession_;
+  std::unique_ptr<BtRegistry> btRegistry_;
 #endif // ENABLE_BITTORRENT
 
   CUIDCounter cuidCounter_;
 
   std::unique_ptr<DNSCache> dnsCache_;
 
-  std::unique_ptr<SystemResolver> systemResolver_;
-
-  std::unique_ptr<CurlSession> curlSession_;
+  std::unique_ptr<AuthConfigFactory> authConfigFactory_;
 
 #ifdef ENABLE_WEBSOCKET
   std::unique_ptr<rpc::WebSocketSessionMan> webSocketSessionMan_;
@@ -117,7 +153,11 @@ private:
   void onEndOfRun();
 
   void afterEachIteration();
-  void rebalanceGlobalDownloadLimit();
+
+  void poolSocket(const std::string& key, const SocketPoolEntry& entry);
+
+  std::multimap<std::string, SocketPoolEntry>::iterator
+  findSocketPoolEntry(const std::string& key);
 
   std::unique_ptr<RequestGroupMan> requestGroupMan_;
   std::unique_ptr<FileAllocationMan> fileAllocationMan_;
@@ -130,10 +170,6 @@ private:
 
   std::unique_ptr<util::security::HMAC> tokenHMAC_;
   std::unique_ptr<util::security::HMACResult> tokenExpected_;
-  uint16_t ed2kTcpPort_ = 0;
-  bool ed2kTcpListenActive_ = false;
-  bool ed2kUdpActive_ = false;
-  size_t ed2kServerConnectionCount_ = 0;
 
 public:
   DownloadEngine(std::unique_ptr<EventPoll> eventPoll);
@@ -155,10 +191,14 @@ public:
   bool deleteSocketForWriteCheck(const std::shared_ptr<SocketCore>& socket,
                                  Command* command);
 
-  bool addSocketForReadCheck(sock_t socket, Command* command);
-  bool deleteSocketForReadCheck(sock_t socket, Command* command);
-  bool addSocketForWriteCheck(sock_t socket, Command* command);
-  bool deleteSocketForWriteCheck(sock_t socket, Command* command);
+#ifdef ENABLE_ASYNC_DNS
+
+  bool addNameResolverCheck(const std::shared_ptr<AsyncNameResolver>& resolver,
+                            Command* command);
+  bool
+  deleteNameResolverCheck(const std::shared_ptr<AsyncNameResolver>& resolver,
+                          Command* command);
+#endif // ENABLE_ASYNC_DNS
 
   void addCommand(std::vector<std::unique_ptr<Command>> commands);
 
@@ -187,37 +227,7 @@ public:
 
   Option* getOption() const { return option_; }
 
-  void setOption(Option* op);
-
-  CurlSession* getCurlSession() const { return curlSession_.get(); }
-
-  void setCurlSession(std::unique_ptr<CurlSession> session);
-
-  uint16_t getEd2kTcpPort() const { return ed2kTcpPort_; }
-
-  void setEd2kTcpPort(uint16_t port) { ed2kTcpPort_ = port; }
-
-  bool isEd2kTcpListenActive() const { return ed2kTcpListenActive_; }
-
-  void setEd2kTcpListenActive(bool active) { ed2kTcpListenActive_ = active; }
-
-  bool isEd2kUdpActive() const { return ed2kUdpActive_; }
-
-  void setEd2kUdpActive(bool active) { ed2kUdpActive_ = active; }
-
-  size_t getEd2kServerConnectionCount() const
-  {
-    return ed2kServerConnectionCount_;
-  }
-
-  void addEd2kServerConnection() { ++ed2kServerConnectionCount_; }
-
-  void removeEd2kServerConnection()
-  {
-    if (ed2kServerConnectionCount_ != 0) {
-      --ed2kServerConnectionCount_;
-    }
-  }
+  void setOption(Option* op) { option_ = op; }
 
   void setStatCalc(std::unique_ptr<StatCalc> statCalc);
 
@@ -233,10 +243,55 @@ public:
 
   void addRoutineCommand(std::unique_ptr<Command> command);
 
-#ifdef ENABLE_BITTORRENT
-  const std::unique_ptr<BtSession>& getBtSession() const { return btSession_; }
+  void poolSocket(const std::string& ipaddr, uint16_t port,
+                  const std::string& username, const std::string& proxyhost,
+                  uint16_t proxyport, const std::shared_ptr<SocketCore>& sock,
+                  const std::string& options,
+                  std::chrono::seconds timeout = 15_s);
 
-  void setBtSession(std::unique_ptr<BtSession> session);
+  void poolSocket(const std::shared_ptr<Request>& request,
+                  const std::string& username,
+                  const std::shared_ptr<Request>& proxyRequest,
+                  const std::shared_ptr<SocketCore>& socket,
+                  const std::string& options,
+                  std::chrono::seconds timeout = 15_s);
+
+  void poolSocket(const std::string& ipaddr, uint16_t port,
+                  const std::string& proxyhost, uint16_t proxyport,
+                  const std::shared_ptr<SocketCore>& sock,
+                  std::chrono::seconds timeout = 15_s);
+
+  void poolSocket(const std::shared_ptr<Request>& request,
+                  const std::shared_ptr<Request>& proxyRequest,
+                  const std::shared_ptr<SocketCore>& socket,
+                  std::chrono::seconds timeout = 15_s);
+
+  std::shared_ptr<SocketCore> popPooledSocket(const std::string& ipaddr,
+                                              uint16_t port,
+                                              const std::string& proxyhost,
+                                              uint16_t proxyport);
+
+  std::shared_ptr<SocketCore>
+  popPooledSocket(std::string& options, const std::string& ipaddr,
+                  uint16_t port, const std::string& username,
+                  const std::string& proxyhost, uint16_t proxyport);
+
+  std::shared_ptr<SocketCore>
+  popPooledSocket(const std::vector<std::string>& ipaddrs, uint16_t port);
+
+  std::shared_ptr<SocketCore>
+  popPooledSocket(std::string& options, const std::vector<std::string>& ipaddrs,
+                  uint16_t port, const std::string& username);
+
+  void evictSocketPool();
+
+  const std::unique_ptr<CookieStorage>& getCookieStorage() const;
+
+#ifdef ENABLE_BITTORRENT
+  const std::unique_ptr<BtRegistry>& getBtRegistry() const
+  {
+    return btRegistry_;
+  }
 #endif // ENABLE_BITTORRENT
 
   cuid_t newCUID();
@@ -259,7 +314,9 @@ public:
 
   void removeCachedIPAddress(const std::string& hostname, uint16_t port);
 
-  SystemResolver* getSystemResolver() const { return systemResolver_.get(); }
+  void setAuthConfigFactory(std::unique_ptr<AuthConfigFactory> factory);
+
+  const std::unique_ptr<AuthConfigFactory>& getAuthConfigFactory() const;
 
   void setRefreshInterval(std::chrono::milliseconds interval);
 

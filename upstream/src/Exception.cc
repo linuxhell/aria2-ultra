@@ -33,29 +33,10 @@
  */
 /* copyright --> */
 #include "Exception.h"
-#include "error_code.h"
-#include <memory>
-#include <string>
 
-#include <cstring>
 #include <sstream>
 
 namespace aria2 {
-
-namespace {
-const char* sourceName(const char* path)
-{
-  if (!path) {
-    return "unknown";
-  }
-  auto slash = strrchr(path, '/');
-  const auto backslash = strrchr(path, '\\');
-  if (!slash || (backslash && backslash > slash)) {
-    slash = backslash;
-  }
-  return slash ? slash + 1 : path;
-}
-} // namespace
 
 Exception::Exception(const char* file, int line, const std::string& msg)
     : file_(file),
@@ -120,7 +101,7 @@ std::string Exception::stackTrace() const
 {
   std::stringstream s;
   s << "Exception: "
-    << "[" << sourceName(file_) << ":" << line_ << "] ";
+    << "[" << file_ << ":" << line_ << "] ";
   if (errNum_) {
     s << "errNum=" << errNum_ << " ";
   }
@@ -129,7 +110,7 @@ std::string Exception::stackTrace() const
   std::shared_ptr<Exception> e = cause_;
   while (e) {
     s << "  -> "
-      << "[" << sourceName(e->file_) << ":" << e->line_ << "] ";
+      << "[" << e->file_ << ":" << e->line_ << "] ";
     if (e->getErrNum()) {
       s << "errNum=" << e->getErrNum() << " ";
     }

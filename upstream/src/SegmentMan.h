@@ -166,8 +166,6 @@ public:
 
   void cancelSegment(cuid_t cuid, const std::shared_ptr<Segment>& segment);
 
-  bool cancelSegmentByIndex(size_t index);
-
   void cancelAllSegments();
 
   void eraseSegmentWrittenLengthMemo();

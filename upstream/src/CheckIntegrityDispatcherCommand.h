@@ -50,7 +50,7 @@ public:
 
 protected:
   virtual std::unique_ptr<Command>
-  createCommand(CheckIntegrityEntry* entry) override;
+  createCommand(CheckIntegrityEntry* entry) CXX11_OVERRIDE;
 };
 
 } // namespace aria2

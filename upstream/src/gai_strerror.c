@@ -28,7 +28,22 @@
 
 #include "gai_strerror.h"
 
-#define N_(string) (string)
+#ifdef ENABLE_NLS
+#  include <libintl.h>
+#endif
+
+#ifdef ENABLE_NLS
+#  define _(string) gettext(string)
+#  ifdef gettext_noop
+#    define N_(string) gettext_noop(string)
+#  else
+#    define N_(string) (string)
+#  endif
+#else
+#  define gettext(string) (string)
+#  define _(string) (string)
+#  define N_(string) (string)
+#endif
 
 /*
  * Error messages for gai_strerror().
@@ -72,10 +87,11 @@ static char* eai_errlist[] = {
 /*
  * gai_strerror().
  */
-const char* gai_strerror(int ecode)
+const char* gai_strerror(ecode)
+int ecode;
 {
   if (ecode < 0 || ecode > EAI_SYSTEM)
-    return "Unknown error";
+    return _("Unknown error");
 
-  return eai_errlist[ecode];
+  return gettext(eai_errlist[ecode]);
 }

@@ -33,8 +33,6 @@
  */
 /* copyright --> */
 #include "NetStat.h"
-#include "TransferStat.h"
-#include <cstddef>
 #include "wallclock.h"
 
 namespace aria2 {
@@ -92,6 +90,13 @@ void NetStat::updateUpload(size_t bytes)
   sessionUploadLength_ += bytes;
 }
 
+void NetStat::updateUploadSpeed(size_t bytes) { uploadSpeed_.update(bytes); }
+
+void NetStat::updateUploadLength(size_t bytes)
+{
+  sessionUploadLength_ += bytes;
+}
+
 int NetStat::getMaxDownloadSpeed() const
 {
   return downloadSpeed_.getMaxSpeed();
@@ -129,7 +134,6 @@ TransferStat NetStat::toTransferStat()
   stat.uploadSpeed = calculateUploadSpeed();
   stat.sessionDownloadLength = getSessionDownloadLength();
   stat.sessionUploadLength = getSessionUploadLength();
-  stat.allTimeUploadLength = stat.sessionUploadLength;
   return stat;
 }
 

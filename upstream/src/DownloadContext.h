@@ -36,7 +36,6 @@
 #define D_DOWNLOAD_CONTEXT_H
 
 #include "common.h"
-#include "support/FilePath.h"
 
 #include <cassert>
 #include <string>
@@ -44,6 +43,7 @@
 #include <memory>
 
 #include "TimerA2.h"
+#include "A2STR.h"
 #include "ValueBase.h"
 #include "SegList.h"
 #include "ContextAttribute.h"
@@ -95,7 +95,7 @@ public:
   // Convenient constructor that creates single file download.  path
   // should be escaped with util::escapePath(...).
   DownloadContext(int32_t pieceLength, int64_t totalLength,
-                  std::string path = "");
+                  std::string path = A2STR::NIL);
 
   ~DownloadContext();
 
@@ -161,8 +161,9 @@ public:
   void setDigest(const std::string& hashType, const std::string& digest);
 
   // The representative path name for this context. It is used as a
-  // If basePath_ is set, returns basePath_. Otherwise, the first
-  // FileEntry's getFilePath() is returned.
+  // part of .aria2 control file. If basePath_ is set, returns
+  // basePath_. Otherwise, the first FileEntry's getFilePath() is
+  // returned.
   const std::string& getBasePath() const;
 
   void setBasePath(const std::string& basePath);
@@ -189,9 +190,6 @@ public:
 
   // Returns true if whole hash(not piece hash) is available.
   bool isChecksumVerificationAvailable() const;
-
-  // Returns true if whole file hash is available and has not been verified.
-  bool isChecksumVerificationPending() const;
 
   // Returns true if piece hash(not whole file hash) is available.
   bool isPieceHashVerificationAvailable() const;
@@ -231,9 +229,10 @@ public:
   // RequestGroupMan via getOwnerRequestGroup().
   void updateDownload(size_t bytes);
 
-  // This method also updates the global upload metrics held by
+  // This method also updates global upload length held by
   // RequestGroupMan via getOwnerRequestGroup().
-  void updateUpload(size_t bytes);
+  void updateUploadLength(size_t bytes);
+  void updateUploadSpeed(size_t bytes);
 };
 
 } // namespace aria2

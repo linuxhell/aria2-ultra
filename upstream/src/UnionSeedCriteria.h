@@ -50,9 +50,9 @@ public:
   UnionSeedCriteria();
   virtual ~UnionSeedCriteria();
 
-  virtual void reset() override;
+  virtual void reset() CXX11_OVERRIDE;
 
-  virtual bool evaluate() override;
+  virtual bool evaluate() CXX11_OVERRIDE;
 
   void addSeedCriteria(std::unique_ptr<SeedCriteria> cri);
 

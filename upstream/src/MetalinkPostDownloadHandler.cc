@@ -32,28 +32,25 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "DiskAdaptor.h"
-#include "FileEntry.h"
-#include "Option.h"
-#include "PieceStorage.h"
 #include "MetalinkPostDownloadHandler.h"
-#include "a2functional.h"
-#include <memory>
-#include <string>
-#include <vector>
 
 #include <deque>
 
 #include "RequestGroup.h"
 #include "Metalink2RequestGroup.h"
-#include "Log.h"
+#include "Logger.h"
+#include "LogFactory.h"
+#include "DiskAdaptor.h"
+#include "PieceStorage.h"
 #include "DownloadHandlerConstants.h"
 #include "ContentTypeRequestGroupCriteria.h"
 #include "Exception.h"
 #include "prefs.h"
+#include "Option.h"
 #include "DownloadContext.h"
 #include "download_helper.h"
 #include "fmt.h"
+#include "FileEntry.h"
 #include "RequestGroupMan.h"
 
 namespace aria2 {
@@ -67,10 +64,9 @@ MetalinkPostDownloadHandler::MetalinkPostDownloadHandler()
 namespace {
 const std::string& getBaseUri(RequestGroup* requestGroup)
 {
-  static const std::string empty;
   auto& dctx = requestGroup->getDownloadContext();
   if (dctx->getFileEntries().empty()) {
-    return empty;
+    return A2STR::NIL;
   }
   else {
     // TODO Check download result for each URI
@@ -79,7 +75,7 @@ const std::string& getBaseUri(RequestGroup* requestGroup)
     if (spentUris.empty()) {
       auto& remainingUris = entry->getRemainingUris();
       if (remainingUris.empty()) {
-        return empty;
+        return A2STR::NIL;
       }
       else {
         return remainingUris.front();
@@ -96,7 +92,7 @@ void MetalinkPostDownloadHandler::getNextRequestGroups(
     std::vector<std::shared_ptr<RequestGroup>>& groups,
     RequestGroup* requestGroup) const
 {
-  A2_LOG_TRACE(fmt("Generating RequestGroups for Metalink file %s",
+  A2_LOG_DEBUG(fmt("Generating RequestGroups for Metalink file %s",
                    requestGroup->getFirstFilePath().c_str()));
   auto diskAdaptor = requestGroup->getPieceStorage()->getDiskAdaptor();
   try {

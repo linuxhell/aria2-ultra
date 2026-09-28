@@ -50,28 +50,28 @@ private:
 public:
   SinkStreamFilter(WrDiskCache* wrDiskCache = nullptr, bool hashUpdate = false);
 
-  virtual void init() override {}
+  virtual void init() CXX11_OVERRIDE {}
 
   virtual ssize_t transform(const std::shared_ptr<BinaryStream>& out,
                             const std::shared_ptr<Segment>& segment,
                             const unsigned char* inbuf,
-                            size_t inlen) override;
+                            size_t inlen) CXX11_OVERRIDE;
 
-  virtual bool finished() override { return true; }
+  virtual bool finished() CXX11_OVERRIDE { return true; }
 
-  virtual void release() override {}
+  virtual void release() CXX11_OVERRIDE {}
 
-  virtual const std::string& getName() const override { return NAME; }
+  virtual const std::string& getName() const CXX11_OVERRIDE { return NAME; }
 
   static const std::string NAME;
 
-  virtual size_t getBytesProcessed() const override
+  virtual size_t getBytesProcessed() const CXX11_OVERRIDE
   {
     return bytesProcessed_;
   }
 
   virtual bool
-  installDelegate(const std::unique_ptr<StreamFilter> filter) override
+  installDelegate(const std::unique_ptr<StreamFilter> filter) CXX11_OVERRIDE
   {
     return false;
   }

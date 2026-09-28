@@ -33,12 +33,6 @@
  */
 /* copyright --> */
 #include "HttpServer.h"
-#include <algorithm>
-#include <cstddef>
-#include <iterator>
-#include <memory>
-#include <utility>
-#include <vector>
 
 #include <sstream>
 
@@ -47,12 +41,13 @@
 #include "HttpHeaderProcessor.h"
 #include "DlAbortEx.h"
 #include "message.h"
-#include "support/Text.h"
-#include "support/Numbers.h"
+#include "util.h"
+#include "util_security.h"
+#include "LogFactory.h"
+#include "Logger.h"
+#include "base64.h"
 #include "a2functional.h"
 #include "fmt.h"
-#include "a2iterator.h"
-#include "Log.h"
 #include "SocketRecvBuffer.h"
 #include "TimeA2.h"
 #include "array_fun.h"
@@ -62,6 +57,8 @@
 #endif // ENABLE_XML_RPC
 
 namespace aria2 {
+
+std::unique_ptr<util::security::HMAC> HttpServer::hmac_;
 
 HttpServer::HttpServer(const std::shared_ptr<SocketCore>& socket)
     : socket_(socket),
@@ -186,14 +183,12 @@ bool HttpServer::receiveRequest()
   if (headerProcessor_->parse(socketRecvBuffer_->getBuffer(),
                               socketRecvBuffer_->getBufferLength())) {
     lastRequestHeader_ = headerProcessor_->getResult();
-    A2_LOG_TRACE(
-        fmt("HTTP server received request: %s",
-            logging::summarizeHttpMessage(headerProcessor_->getHeaderString())
-                .c_str()));
+    A2_LOG_INFO(fmt("HTTP Server received request\n%s",
+                    headerProcessor_->getHeaderString().c_str()));
     socketRecvBuffer_->drain(headerProcessor_->getLastBytesProcessed());
     bodyConsumed_ = 0;
     if (setupResponseRecv() < 0) {
-      A2_LOG_DEBUG("Request path is invalid. Ignore the request body.");
+      A2_LOG_INFO("Request path is invalid. Ignore the request body.");
     }
     const std::string& contentLengthHdr =
         lastRequestHeader_->find(HttpHeader::CONTENT_LENGTH);
@@ -298,8 +293,7 @@ void HttpServer::feedResponse(int status, const std::string& headers,
   }
   header += headers;
   header += "\r\n";
-  A2_LOG_TRACE(fmt("HTTP server sends response: %s",
-                   logging::summarizeHttpMessage(header).c_str()));
+  A2_LOG_DEBUG(fmt("HTTP Server sends response:\n%s", header.c_str()));
   socketBuffer_.pushStr(std::move(header));
   socketBuffer_.pushStr(std::move(text));
 }
@@ -313,8 +307,7 @@ void HttpServer::feedUpgradeResponse(const std::string& protocol,
                            "%s"
                            "\r\n",
                            protocol.c_str(), headers.c_str());
-  A2_LOG_TRACE(fmt("HTTP server sends upgrade response: %s",
-                   logging::summarizeHttpMessage(header).c_str()));
+  A2_LOG_DEBUG(fmt("HTTP Server sends upgrade response:\n%s", header.c_str()));
   socketBuffer_.pushStr(std::move(header));
 }
 
@@ -323,6 +316,54 @@ ssize_t HttpServer::sendResponse() { return socketBuffer_.send(); }
 bool HttpServer::sendBufferIsEmpty() const
 {
   return socketBuffer_.sendBufferIsEmpty();
+}
+
+bool HttpServer::authenticate()
+{
+  if (!username_) {
+    return true;
+  }
+
+  const std::string& authHeader =
+      lastRequestHeader_->find(HttpHeader::AUTHORIZATION);
+  if (authHeader.empty()) {
+    return false;
+  }
+  auto p = util::divide(std::begin(authHeader), std::end(authHeader), ' ');
+  if (!util::streq(p.first.first, p.first.second, "Basic")) {
+    return false;
+  }
+
+  std::string userpass = base64::decode(p.second.first, p.second.second);
+  auto up = util::divide(std::begin(userpass), std::end(userpass), ':', false);
+  std::string username(up.first.first, up.first.second);
+  std::string password(up.second.first, up.second.second);
+  return *username_ == hmac_->getResult(username) &&
+         (!password_ || *password_ == hmac_->getResult(password));
+}
+
+void HttpServer::setUsernamePassword(const std::string& username,
+                                     const std::string& password)
+{
+  using namespace util::security;
+
+  if (!hmac_) {
+    hmac_ = HMAC::createRandom();
+  }
+
+  if (!username.empty()) {
+    username_ = make_unique<HMACResult>(hmac_->getResult(username));
+  }
+  else {
+    username_.reset();
+  }
+
+  if (!password.empty()) {
+    password_ = make_unique<HMACResult>(hmac_->getResult(password));
+  }
+  else {
+    password_.reset();
+  }
 }
 
 int HttpServer::setupResponseRecv()

@@ -82,6 +82,11 @@
 #  include <sys/uio.h>
 #endif // HAVE_SYS_UIO_H
 
+#ifndef HAVE_GETADDRINFO
+#  include "getaddrinfo.h"
+#  define HAVE_GAI_STRERROR
+#endif // HAVE_GETADDRINFO
+
 #ifndef HAVE_GAI_STRERROR
 #  include "gai_strerror.h"
 #endif // HAVE_GAI_STRERROR

@@ -33,14 +33,16 @@
  */
 /* copyright --> */
 #include "ServerStat.h"
-#include "TimeA2.h"
-#include <cinttypes>
-#include <cstdint>
-#include <cstring>
-#include <string>
 
-#include "Log.h"
+#include <ostream>
+#include <algorithm>
+
+#include "array_fun.h"
+#include "Logger.h"
+#include "LogFactory.h"
 #include "fmt.h"
+#include "a2functional.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -97,12 +99,12 @@ void ServerStat::updateSingleConnectionAvgSpeed(int downloadSpeed)
                        ((1.0 / 5.0) * (float)downloadSpeed);
   }
   if (avgDownloadSpeed < (int)(0.80 * singleConnectionAvgSpeed_)) {
-    A2_LOG_TRACE(fmt("ServerStat:%s: resetting counter since single connection"
+    A2_LOG_DEBUG(fmt("ServerStat:%s: resetting counter since single connection"
                      " speed dropped",
                      getHostname().c_str()));
     counter_ = 0;
   }
-  A2_LOG_TRACE(
+  A2_LOG_DEBUG(
       fmt("ServerStat:%s: singleConnectionAvgSpeed_ old:%.2fKB/s"
           " new:%.2fKB/s last:%.2fKB/s",
           getHostname().c_str(), (float)singleConnectionAvgSpeed_ / 1024,
@@ -129,7 +131,7 @@ void ServerStat::updateMultiConnectionAvgSpeed(int downloadSpeed)
     avgDownloadSpeed = ((4.0 / 5.0) * (float)multiConnectionAvgSpeed_) +
                        ((1.0 / 5.0) * (float)downloadSpeed);
   }
-  A2_LOG_TRACE(
+  A2_LOG_DEBUG(
       fmt("ServerStat:%s: multiConnectionAvgSpeed_ old:%.2fKB/s"
           " new:%.2fKB/s last:%.2fKB/s",
           getHostname().c_str(), (float)multiConnectionAvgSpeed_ / 1024,
@@ -155,7 +157,7 @@ void ServerStat::setStatus(const std::string& status)
 
 void ServerStat::setStatusInternal(STATUS status)
 {
-  A2_LOG_TRACE(fmt("ServerStat: set status %s for %s (%s)",
+  A2_LOG_DEBUG(fmt("ServerStat: set status %s for %s (%s)",
                    STATUS_STRING[status], hostname_.c_str(),
                    protocol_.c_str()));
   status_ = status;

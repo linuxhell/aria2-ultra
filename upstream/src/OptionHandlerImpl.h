@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "AbstractOptionHandler.h"
+#include "A2STR.h"
 
 namespace aria2 {
 
@@ -54,8 +55,8 @@ public:
                        char shortName = 0);
   virtual ~BooleanOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class IntegerRangeOptionHandler : public AbstractOptionHandler {
@@ -69,8 +70,8 @@ public:
                             int32_t max, char shortName = 0);
   virtual ~IntegerRangeOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class NumberOptionHandler : public AbstractOptionHandler {
@@ -85,9 +86,9 @@ public:
   virtual ~NumberOptionHandler();
 
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
   void parseArg(Option& option, int64_t number) const;
-  virtual std::string createPossibleValuesString() const override;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class UnitNumberOptionHandler : public NumberOptionHandler {
@@ -99,7 +100,7 @@ public:
                           char shortName = 0);
   virtual ~UnitNumberOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
 };
 
 class FloatNumberOptionHandler : public AbstractOptionHandler {
@@ -115,8 +116,8 @@ public:
                            char shortName = 0);
   virtual ~FloatNumberOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class DefaultOptionHandler : public AbstractOptionHandler {
@@ -127,13 +128,13 @@ private:
 public:
   DefaultOptionHandler(PrefPtr pref, const char* description = NO_DESCRIPTION,
                        const std::string& defaultValue = NO_DEFAULT_VALUE,
-                       const std::string& possibleValuesString = "",
+                       const std::string& possibleValuesString = A2STR::NIL,
                        OptionHandler::ARG_TYPE argType = OptionHandler::REQ_ARG,
                        char shortName = 0);
   virtual ~DefaultOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
   void setAllowEmpty(bool allow);
 };
 
@@ -146,13 +147,13 @@ public:
   CumulativeOptionHandler(
       PrefPtr pref, const char* description, const std::string& defaultValue,
       const std::string& delim,
-      const std::string& possibleValuesString = "",
+      const std::string& possibleValuesString = A2STR::NIL,
       OptionHandler::ARG_TYPE argType = OptionHandler::REQ_ARG,
       char shortName = 0);
   virtual ~CumulativeOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class IndexOutOptionHandler : public AbstractOptionHandler {
@@ -161,8 +162,8 @@ public:
                         char shortName = 0);
   virtual ~IndexOutOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class ChecksumOptionHandler : public AbstractOptionHandler {
@@ -174,8 +175,8 @@ public:
                         char shortName = 0);
   virtual ~ChecksumOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 
 private:
   // message digest type acceptable for this option.  Empty means that
@@ -194,8 +195,8 @@ public:
                          char shortName = 0);
   virtual ~ParameterOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class HostPortOptionHandler : public AbstractOptionHandler {
@@ -209,10 +210,10 @@ public:
                         PrefPtr portOptionName, char shortName = 0);
   virtual ~HostPortOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
   void setHostAndPort(Option& option, const std::string& hostname,
                       uint16_t port) const;
-  virtual std::string createPossibleValuesString() const override;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class HttpProxyOptionHandler : public AbstractOptionHandler {
@@ -225,8 +226,8 @@ public:
                          const std::string& defaultValue, char shortName = 0);
   virtual ~HttpProxyOptionHandler();
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class LocalFilePathOptionHandler : public AbstractOptionHandler {
@@ -243,8 +244,8 @@ public:
                              bool mustExist = true,
                              const std::string& possibleValuesString = "");
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class PrioritizePieceOptionHandler : public AbstractOptionHandler {
@@ -253,8 +254,8 @@ public:
       PrefPtr pref, const char* description = NO_DESCRIPTION,
       const std::string& defaultValue = NO_DEFAULT_VALUE, char shortName = 0);
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
 };
 
 class OptimizeConcurrentDownloadsOptionHandler : public AbstractOptionHandler {
@@ -263,8 +264,55 @@ public:
       PrefPtr pref, const char* description = NO_DESCRIPTION,
       const std::string& defaultValue = NO_DEFAULT_VALUE, char shortName = 0);
   virtual void parseArg(Option& option,
-                        const std::string& optarg) const override;
-  virtual std::string createPossibleValuesString() const override;
+                        const std::string& optarg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
+};
+
+// This class is used to deprecate option and optionally handle its
+// option value using replacing option.
+class DeprecatedOptionHandler : public OptionHandler {
+private:
+  OptionHandler* depOptHandler_;
+  const OptionHandler* repOptHandler_;
+  bool stillWork_;
+  std::string additionalMessage_;
+
+public:
+  // depOptHandler is deprecated option and repOptHandler is replacing
+  // new option. If there is no replacing option, specify nullptr.  If
+  // there is no replacing option, but the option still lives, give
+  // true to stillWork. Set additional message to additionalMessage.
+  DeprecatedOptionHandler(OptionHandler* depOptHandler,
+                          const OptionHandler* repOptHandler = nullptr,
+                          bool stillWork = false,
+                          std::string additionalMessage = "");
+  virtual ~DeprecatedOptionHandler();
+  virtual void parse(Option& option,
+                     const std::string& arg) const CXX11_OVERRIDE;
+  virtual std::string createPossibleValuesString() const CXX11_OVERRIDE;
+  virtual bool hasTag(uint32_t tag) const CXX11_OVERRIDE;
+  virtual void addTag(uint32_t tag) CXX11_OVERRIDE;
+  virtual std::string toTagString() const CXX11_OVERRIDE;
+  virtual const char* getName() const CXX11_OVERRIDE;
+  virtual const char* getDescription() const CXX11_OVERRIDE;
+  virtual const std::string& getDefaultValue() const CXX11_OVERRIDE;
+  virtual bool isHidden() const CXX11_OVERRIDE;
+  virtual void hide() CXX11_OVERRIDE;
+  virtual PrefPtr getPref() const CXX11_OVERRIDE;
+  virtual ARG_TYPE getArgType() const CXX11_OVERRIDE;
+  virtual char getShortName() const CXX11_OVERRIDE;
+  virtual bool getEraseAfterParse() const CXX11_OVERRIDE;
+  virtual void setEraseAfterParse(bool eraseAfterParse) CXX11_OVERRIDE;
+  virtual bool getInitialOption() const CXX11_OVERRIDE;
+  virtual void setInitialOption(bool f) CXX11_OVERRIDE;
+  virtual bool getChangeOption() const CXX11_OVERRIDE;
+  virtual void setChangeOption(bool f) CXX11_OVERRIDE;
+  virtual bool getChangeOptionForReserved() const CXX11_OVERRIDE;
+  virtual void setChangeOptionForReserved(bool f) CXX11_OVERRIDE;
+  virtual bool getChangeGlobalOption() const CXX11_OVERRIDE;
+  virtual void setChangeGlobalOption(bool f) CXX11_OVERRIDE;
+  virtual bool getCumulative() const CXX11_OVERRIDE;
+  virtual void setCumulative(bool f) CXX11_OVERRIDE;
 };
 
 } // namespace aria2

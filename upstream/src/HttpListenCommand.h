@@ -56,7 +56,7 @@ public:
 
   virtual ~HttpListenCommand();
 
-  virtual bool execute() override;
+  virtual bool execute() CXX11_OVERRIDE;
 
   bool bindPort(uint16_t port);
 };

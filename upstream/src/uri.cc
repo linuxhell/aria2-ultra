@@ -33,13 +33,9 @@
  */
 /* copyright --> */
 #include "uri.h"
-#include "uri_split.h"
-#include <algorithm>
-#include <cstdint>
-#include <vector>
+#include "A2STR.h"
 #include "FeatureConfig.h"
-#include "support/Encoding.h"
-#include "fmt.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -123,12 +119,12 @@ bool parse(UriStruct& result, const std::string& uri)
     }
     else {
       result.dir.assign(p + res.fields[USR_PATH].off, res.fields[USR_PATH].len);
-      result.file = "";
+      result.file = A2STR::NIL;
     }
   }
   else {
     result.dir = "/";
-    result.file = "";
+    result.file = A2STR::NIL;
   }
 
   if (res.field_set & (1 << USR_QUERY)) {
@@ -137,7 +133,7 @@ bool parse(UriStruct& result, const std::string& uri)
                         res.fields[USR_QUERY].len);
   }
   else {
-    result.query = "";
+    result.query = A2STR::NIL;
   }
 
   if (res.field_set & (1 << USR_USER)) {
@@ -147,7 +143,7 @@ bool parse(UriStruct& result, const std::string& uri)
         util::percentDecode(result.username.begin(), result.username.end());
   }
   else {
-    result.username = "";
+    result.username = A2STR::NIL;
   }
 
   if (res.field_set & (1 << USR_PASSWD)) {
@@ -159,7 +155,7 @@ bool parse(UriStruct& result, const std::string& uri)
   }
   else {
     result.hasPassword = false;
-    result.password = "";
+    result.password = A2STR::NIL;
   }
 
   result.ipv6LiteralAddress = res.flags & USF_IPV6ADDR;

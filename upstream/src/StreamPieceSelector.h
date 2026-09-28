@@ -41,7 +41,8 @@
 
 namespace aria2 {
 
-// Select a piece for ED2K transfer storage.
+// Select piece for HTTP/FTP download. For BitTorrent downloads, use
+// PieceSelector interface.
 class StreamPieceSelector {
 public:
   virtual ~StreamPieceSelector() = default;

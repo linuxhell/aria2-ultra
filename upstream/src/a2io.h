@@ -140,11 +140,11 @@
 // For Windows, we share files for reading and writing.
 #  define a2open(path, flags, mode) _wsopen(path, flags, _SH_DENYNO, mode)
 #  define a2fopen(path, mode) _wfsopen(path, mode, _SH_DENYNO)
-#  define a2ftruncate(fd, length) _chsize_s(fd, length)
-#  define a2_off_t int64_t
+// # define a2ftruncate(fd, length): We don't use ftruncate in Mingw build
+#  define a2_off_t off_t
 #elif defined(__ANDROID__) || defined(ANDROID)
 #  define a2lseek(fd, offset, origin) lseek64(fd, offset, origin)
-#  define a2fseek(fp, offset, origin) fseeko64(fp, offset, origin)
+// # define a2fseek(fp, offset, origin): No fseek64 and not used in aria2
 #  define a2fstat(fd, buf) fstat64(fd, buf)
 // # define a2ftell(fd): No ftell64 and not used in aria2
 #  define a2_struct_stat struct stat64

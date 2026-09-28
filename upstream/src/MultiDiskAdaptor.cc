@@ -32,36 +32,26 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "DiskWriter.h"
-#include "OpenedFileCounter.h"
 #include "MultiDiskAdaptor.h"
-#include "TimeA2.h"
-#include <cinttypes>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <iterator>
-#include <limits>
-#include <memory>
-#include <string>
-#include <utility>
 
 #include <cassert>
 #include <algorithm>
 #include <map>
 
+#include "DefaultDiskWriter.h"
 #include "message.h"
-#include "a2functional.h"
-#include "fmt.h"
-#include "DlAbortEx.h"
+#include "util.h"
 #include "FileEntry.h"
 #include "MultiFileAllocationIterator.h"
 #include "DefaultDiskWriterFactory.h"
+#include "DlAbortEx.h"
 #include "File.h"
-#include "Log.h"
+#include "fmt.h"
+#include "Logger.h"
+#include "LogFactory.h"
 #include "SimpleRandomizer.h"
 #include "WrDiskCacheEntry.h"
-#include "DiskAdaptor.h"
+#include "OpenedFileCounter.h"
 
 namespace aria2 {
 
@@ -107,13 +97,6 @@ void DiskWriterEntry::closeFile()
   if (open_) {
     diskWriter_->closeFile();
     open_ = false;
-  }
-}
-
-void DiskWriterEntry::enableSparse()
-{
-  if (diskWriter_) {
-    diskWriter_->enableSparse();
   }
 }
 
@@ -172,7 +155,7 @@ void MultiDiskAdaptor::resetDiskWriterEntries()
       else if (fileEntry->getOffset() < lastOffset) {
         // The files which shares last piece are not needed to be
         // allocated. They just require DiskWriter
-        A2_LOG_TRACE(fmt("%s needs DiskWriter", fileEntry->getPath().c_str()));
+        A2_LOG_DEBUG(fmt("%s needs DiskWriter", fileEntry->getPath().c_str()));
         dwent->needsDiskWriter(true);
       }
     }
@@ -189,7 +172,7 @@ void MultiDiskAdaptor::resetDiskWriterEntries()
         // We needs last part of the file, so file allocation is
         // required, especially for file system which does not support
         // sparse files.
-        A2_LOG_TRACE(
+        A2_LOG_DEBUG(
             fmt("%s needs file allocation", fileEntry->getPath().c_str()));
         (*i)->needsFileAllocation(true);
       }
@@ -199,7 +182,7 @@ void MultiDiskAdaptor::resetDiskWriterEntries()
   for (auto& dwent : diskWriterEntries_) {
     if (dwent->needsFileAllocation() || dwent->needsDiskWriter() ||
         dwent->fileExists()) {
-      A2_LOG_TRACE(fmt("Creating DiskWriter for filename=%s",
+      A2_LOG_DEBUG(fmt("Creating DiskWriter for filename=%s",
                        dwent->getFilePath().c_str()));
       dwent->setDiskWriter(dwFactory.newDiskWriter(dwent->getFilePath()));
       if (readOnly_) {
@@ -231,15 +214,18 @@ void MultiDiskAdaptor::openIfNot(DiskWriterEntry* entry,
                                  void (DiskWriterEntry::*open)())
 {
   if (!entry->isOpen()) {
+    // A2_LOG_NOTICE(fmt("DiskWriterEntry: Cache MISS. offset=%s",
+    //        util::itos(entry->getFileEntry()->getOffset()).c_str()));
     auto& openedFileCounter = getOpenedFileCounter();
     if (openedFileCounter) {
       openedFileCounter->ensureMaxOpenFileLimit(1);
     }
     (entry->*open)();
-    if (getFileAllocationMethod() == DiskAdaptor::FILE_ALLOC_NONE) {
-      entry->enableSparse();
-    }
     openedDiskWriterEntries_.push_back(entry);
+  }
+  else {
+    // A2_LOG_NOTICE(fmt("DiskWriterEntry: Cache HIT. offset=%s",
+    //        util::itos(entry->getFileEntry()->getOffset()).c_str()));
   }
 }
 
@@ -427,6 +413,8 @@ ssize_t MultiDiskAdaptor::readData(unsigned char* data, size_t len,
 void MultiDiskAdaptor::writeCache(const WrDiskCacheEntry* entry)
 {
   for (auto& d : entry->getDataSet()) {
+    A2_LOG_DEBUG(fmt("Cache flush goff=%" PRId64 ", len=%lu", d->goff,
+                     static_cast<unsigned long>(d->len)));
     writeData(d->data + d->offset, d->len, d->goff);
   }
 }

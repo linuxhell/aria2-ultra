@@ -32,7 +32,6 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "support/Encoding.h"
 #include "aria2api.h"
 
 #include <functional>
@@ -41,7 +40,6 @@
 #include "Context.h"
 #include "DownloadEngine.h"
 #include "OptionParser.h"
-#include "LegacyInputAdapter.h"
 #include "Option.h"
 #include "DlAbortEx.h"
 #include "fmt.h"
@@ -51,21 +49,21 @@
 #include "MultiUrlRequestInfo.h"
 #include "prefs.h"
 #include "download_helper.h"
-#include "Log.h"
+#include "LogFactory.h"
 #include "PieceStorage.h"
 #include "DownloadContext.h"
 #include "FileEntry.h"
-#include "rpc/RpcMethods.h"
-#include "RequestGroupActions.h"
+#include "BitfieldMan.h"
+#include "DownloadContext.h"
+#include "RpcMethodImpl.h"
 #include "console.h"
 #include "KeepRunningCommand.h"
+#include "A2STR.h"
 #include "SingletonHolder.h"
 #include "Notifier.h"
 #include "ApiCallbackDownloadEventListener.h"
 #ifdef ENABLE_BITTORRENT
-#  include "BtDownload.h"
-#  include "BtMetadata.h"
-#  include "BtSession.h"
+#  include "bittorrent_helper.h"
 #endif // ENABLE_BITTORRENT
 
 namespace aria2 {
@@ -92,9 +90,6 @@ Platform* platform = nullptr;
 int libraryInit()
 {
   global::initConsole(true);
-  logging::Settings logSettings;
-  logSettings.consoleOutput = false;
-  logging::configure(logSettings);
   try {
     platform = new Platform();
   }
@@ -102,13 +97,13 @@ int libraryInit()
     A2_LOG_ERROR_EX(EX_EXCEPTION_CAUGHT, e);
     return -1;
   }
+  LogFactory::setConsoleOutput(false);
   return 0;
 }
 
 int libraryDeinit()
 {
   delete platform;
-  logging::shutdown();
   return 0;
 }
 
@@ -198,19 +193,15 @@ void apiGatherOption(InputIterator first, InputIterator last, Pred pred,
                      Option* option,
                      const std::shared_ptr<OptionParser>& optionParser)
 {
-  const KeyVals raw(first, last);
-  for (const auto& item :
-       normalizeLegacyInput(raw, LegacyInputSource::Library)) {
-    PrefPtr pref = option::k2p(item.first);
+  for (; first != last; ++first) {
+    const std::string& optionName = (*first).first;
+    PrefPtr pref = option::k2p(optionName);
     const OptionHandler* handler = optionParser->find(pref);
-    if (!handler) {
-      throw DL_ABORT_EX2("Unknown option: " + item.first,
-                         error_code::OPTION_ERROR);
-    }
-    if (!pred(handler)) {
+    if (!handler || !pred(handler)) {
+      // Just ignore the unacceptable options in this context.
       continue;
     }
-    handler->parse(*option, item.second);
+    handler->parse(*option, (*first).second);
   }
 }
 } // namespace
@@ -281,7 +272,7 @@ int addUri(Session* session, A2Gid* gid, const std::vector<std::string>& uris,
                            OptionParser::getInstance());
   }
   catch (RecoverableException& e) {
-    A2_LOG_DEBUG_EX(EX_EXCEPTION_CAUGHT, e);
+    A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, e);
     return -1;
   }
   std::vector<std::shared_ptr<RequestGroup>> result;
@@ -312,7 +303,7 @@ int addMetalink(Session* session, std::vector<A2Gid>* gids,
     createRequestGroupForMetalink(result, requestOption);
   }
   catch (RecoverableException& e) {
-    A2_LOG_DEBUG_EX(EX_EXCEPTION_CAUGHT, e);
+    A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, e);
     return -1;
   }
   if (!result.empty()) {
@@ -353,7 +344,7 @@ int addTorrent(Session* session, A2Gid* gid, const std::string& torrentFile,
                                     torrentFile);
   }
   catch (RecoverableException& e) {
-    A2_LOG_DEBUG_EX(EX_EXCEPTION_CAUGHT, e);
+    A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, e);
     return -1;
   }
   if (!result.empty()) {
@@ -391,11 +382,6 @@ int removeDownload(Session* session, A2Gid gid, bool force)
     }
     else {
       if (group->isDependencyResolved()) {
-#ifdef ENABLE_BITTORRENT
-        if (group->getBtDownload() && e->getBtSession()) {
-          e->getBtSession()->discard(group->getBtDownload());
-        }
-#endif
         e->getRequestGroupMan()->removeReservedGroup(gid);
       }
       else {
@@ -432,16 +418,6 @@ int unpauseDownload(Session* session, A2Gid gid)
     return -1;
   }
   else {
-#ifdef ENABLE_BITTORRENT
-    if (group->getBtDownload()) {
-      try {
-        group->getBtDownload()->beginFileSelectionApply();
-      }
-      catch (RecoverableException&) {
-        return -1;
-      }
-    }
-#endif
     group->setPauseRequested(false);
     e->getRequestGroupMan()->requestQueueCheck();
   }
@@ -455,7 +431,7 @@ int changePosition(Session* session, A2Gid gid, int pos, OffsetMode how)
     return e->getRequestGroupMan()->changeReservedGroupPosition(gid, pos, how);
   }
   catch (RecoverableException& e) {
-    A2_LOG_DEBUG_EX(EX_EXCEPTION_CAUGHT, e);
+    A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, e);
     return -1;
   }
 }
@@ -477,7 +453,7 @@ int changeOption(Session* session, A2Gid gid, const KeyVals& options)
       }
     }
     catch (RecoverableException& err) {
-      A2_LOG_DEBUG_EX(EX_EXCEPTION_CAUGHT, err);
+      A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, err);
       return -1;
     }
     changeOption(group, option, e.get());
@@ -495,12 +471,9 @@ const std::string& getGlobalOption(Session* session, const std::string& name)
   if (OptionParser::getInstance()->find(pref)) {
     return e->getOption()->get(pref);
   }
-  static thread_local std::string projected;
-  if (projectLegacyOption(e->getOption(), name, projected)) {
-    return projected;
+  else {
+    return A2STR::NIL;
   }
-  static const std::string empty;
-  return empty;
 }
 
 KeyVals getGlobalOptions(Session* session)
@@ -516,8 +489,6 @@ KeyVals getGlobalOptions(Session* session)
       options.push_back(KeyVals::value_type(pref->k, option->get(pref)));
     }
   }
-  const auto projected = projectLegacyOptions(option);
-  options.insert(options.end(), projected.begin(), projected.end());
   return options;
 }
 
@@ -530,7 +501,7 @@ int changeGlobalOption(Session* session, const KeyVals& options)
                                     OptionParser::getInstance());
   }
   catch (RecoverableException& err) {
-    A2_LOG_DEBUG_EX(EX_EXCEPTION_CAUGHT, err);
+    A2_LOG_INFO_EX(EX_EXCEPTION_CAUGHT, err);
     return -1;
   }
   changeGlobalOption(option, e.get());
@@ -589,63 +560,57 @@ void createUriEntry(OutputIterator out, const std::shared_ptr<FileEntry>& file)
 
 namespace {
 FileData createFileData(const std::shared_ptr<FileEntry>& fe, int index,
-                        int64_t completedLength)
+                        const BitfieldMan* bf)
 {
   FileData file;
   file.index = index;
   file.path = fe->getPath();
   file.length = fe->getLength();
-  file.completedLength = completedLength;
+  file.completedLength =
+      bf->getOffsetCompletedLength(fe->getOffset(), fe->getLength());
   file.selected = fe->isRequested();
   createUriEntry(std::back_inserter(file.uris), fe);
   return file;
 }
 } // namespace
 
-#ifdef ENABLE_BITTORRENT
 namespace {
-FileData createBtFileData(const BtFileSnapshot& snapshot, int index)
+template <typename OutputIterator, typename InputIterator>
+void createFileEntry(OutputIterator out, InputIterator first,
+                     InputIterator last, const BitfieldMan* bf)
 {
-  FileData file;
-  file.index = index;
-  file.path = snapshot.path;
-  file.length = snapshot.length;
-  file.completedLength = snapshot.completedLength;
-  file.selected = snapshot.selected;
-  return file;
-}
-
-BtMetaInfoData createBtMetaInfo(const BtMetadata* metadata,
-                                const BtSnapshot& snapshot)
-{
-  BtMetaInfoData result;
-  if (!metadata) {
-    return result;
+  size_t index = 1;
+  for (; first != last; ++first) {
+    out++ = createFileData(*first, index++, bf);
   }
-  result.announceList = snapshot.announceList;
-  result.comment = metadata->comment;
-  result.creationDate = metadata->creationDate;
-  result.mode = metadata->mode;
-  if (snapshot.hasMetadata) {
-    result.name = snapshot.name;
-  }
-  return result;
 }
 } // namespace
-#endif
 
 namespace {
 template <typename OutputIterator, typename InputIterator>
 void createFileEntry(OutputIterator out, InputIterator first,
-                     InputIterator last,
-                     const std::vector<int64_t>& completedLengths)
+                     InputIterator last, int64_t totalLength,
+                     int32_t pieceLength, const std::string& bitfield)
 {
-  size_t index = 1;
-  for (; first != last; ++first) {
-    const auto completedLength =
-        index <= completedLengths.size() ? completedLengths[index - 1] : 0;
-    out++ = createFileData(*first, index++, completedLength);
+  BitfieldMan bf(pieceLength, totalLength);
+  bf.setBitfield(reinterpret_cast<const unsigned char*>(bitfield.data()),
+                 bitfield.size());
+  createFileEntry(out, first, last, &bf);
+}
+} // namespace
+
+namespace {
+template <typename OutputIterator, typename InputIterator>
+void createFileEntry(OutputIterator out, InputIterator first,
+                     InputIterator last, int64_t totalLength,
+                     int32_t pieceLength,
+                     const std::shared_ptr<PieceStorage>& ps)
+{
+  BitfieldMan bf(pieceLength, totalLength);
+  if (ps) {
+    bf.setBitfield(ps->getBitfield(), ps->getBitfieldLength());
   }
+  createFileEntry(out, first, last, &bf);
 }
 } // namespace
 
@@ -673,12 +638,9 @@ const std::string& getRequestOption(const std::shared_ptr<Option>& option,
   if (OptionParser::getInstance()->find(pref)) {
     return option->get(pref);
   }
-  static thread_local std::string projected;
-  if (projectLegacyOption(option.get(), name, projected)) {
-    return projected;
+  else {
+    return A2STR::NIL;
   }
-  static const std::string empty;
-  return empty;
 }
 } // namespace
 
@@ -688,8 +650,6 @@ KeyVals getRequestOptions(const std::shared_ptr<Option>& option)
   KeyVals res;
   pushRequestOption(std::back_inserter(res), option,
                     OptionParser::getInstance());
-  const auto projected = projectLegacyOptions(option.get());
-  res.insert(res.end(), projected.begin(), projected.end());
   return res;
 }
 } // namespace
@@ -701,7 +661,7 @@ struct RequestGroupDH : public DownloadHandle {
   {
   }
   virtual ~RequestGroupDH() = default;
-  virtual DownloadStatus getStatus() override
+  virtual DownloadStatus getStatus() CXX11_OVERRIDE
   {
     if (group->getState() == RequestGroup::STATE_ACTIVE) {
       return DOWNLOAD_ACTIVE;
@@ -715,20 +675,20 @@ struct RequestGroupDH : public DownloadHandle {
       }
     }
   }
-  virtual int64_t getTotalLength() override { return group->getTotalLength(); }
-  virtual int64_t getCompletedLength() override
+  virtual int64_t getTotalLength() CXX11_OVERRIDE
+  {
+    return group->getTotalLength();
+  }
+  virtual int64_t getCompletedLength() CXX11_OVERRIDE
   {
     return group->getCompletedLength();
   }
-  virtual int64_t getUploadLength() override { return ts.allTimeUploadLength; }
-  virtual std::string getBitfield() override
+  virtual int64_t getUploadLength() CXX11_OVERRIDE
   {
-#ifdef ENABLE_BITTORRENT
-    if (group->getBtDownload()) {
-      const auto& value = group->getBtDownload()->snapshot().bitfield;
-      return util::fromHex(value.begin(), value.end());
-    }
-#endif
+    return ts.allTimeUploadLength;
+  }
+  virtual std::string getBitfield() CXX11_OVERRIDE
+  {
     const std::shared_ptr<PieceStorage>& ps = group->getPieceStorage();
     if (ps) {
       return std::string(reinterpret_cast<const char*>(ps->getBitfield()),
@@ -738,85 +698,82 @@ struct RequestGroupDH : public DownloadHandle {
       return "";
     }
   }
-  virtual int getDownloadSpeed() override { return ts.downloadSpeed; }
-  virtual int getUploadSpeed() override { return ts.uploadSpeed; }
-  virtual const std::string& getInfoHash() override
+  virtual int getDownloadSpeed() CXX11_OVERRIDE { return ts.downloadSpeed; }
+  virtual int getUploadSpeed() CXX11_OVERRIDE { return ts.uploadSpeed; }
+  virtual const std::string& getInfoHash() CXX11_OVERRIDE
   {
 #ifdef ENABLE_BITTORRENT
     if (group->getDownloadContext()->hasAttribute(CTX_ATTR_BT)) {
-      return static_cast<BtMetadata*>(
-                 group->getDownloadContext()->getAttribute(CTX_ATTR_BT).get())
-          ->infoHash;
+      return bittorrent::getTorrentAttrs(group->getDownloadContext())->infoHash;
     }
 #endif // ENABLE_BITTORRENT
-    static const std::string empty;
-    return empty;
+    return A2STR::NIL;
   }
-  virtual size_t getPieceLength() override
+  virtual size_t getPieceLength() CXX11_OVERRIDE
   {
     const std::shared_ptr<DownloadContext>& dctx = group->getDownloadContext();
     return dctx->getPieceLength();
   }
-  virtual int getNumPieces() override
+  virtual int getNumPieces() CXX11_OVERRIDE
   {
     return group->getDownloadContext()->getNumPieces();
   }
-  virtual int getConnections() override { return group->getNumConnection(); }
-  virtual int getErrorCode() override { return group->getLastErrorCode(); }
-  virtual const std::vector<A2Gid>& getFollowedBy() override
+  virtual int getConnections() CXX11_OVERRIDE
+  {
+    return group->getNumConnection();
+  }
+  virtual int getErrorCode() CXX11_OVERRIDE
+  {
+    return group->getLastErrorCode();
+  }
+  virtual const std::vector<A2Gid>& getFollowedBy() CXX11_OVERRIDE
   {
     return group->followedBy();
   }
-  virtual A2Gid getFollowing() override { return group->following(); }
-  virtual A2Gid getBelongsTo() override { return group->belongsTo(); }
-  virtual const std::string& getDir() override
+  virtual A2Gid getFollowing() CXX11_OVERRIDE { return group->following(); }
+  virtual A2Gid getBelongsTo() CXX11_OVERRIDE { return group->belongsTo(); }
+  virtual const std::string& getDir() CXX11_OVERRIDE
   {
     return group->getOption()->get(PREF_DIR);
   }
-  virtual std::vector<FileData> getFiles() override
+  virtual std::vector<FileData> getFiles() CXX11_OVERRIDE
   {
     std::vector<FileData> res;
-#ifdef ENABLE_BITTORRENT
-    if (group->getBtDownload()) {
-      int index = 1;
-      for (const auto& file : group->getBtDownload()->snapshot().files) {
-        res.push_back(createBtFileData(file, index++));
-      }
-      return res;
-    }
-#endif
     const std::shared_ptr<DownloadContext>& dctx = group->getDownloadContext();
     createFileEntry(std::back_inserter(res), dctx->getFileEntries().begin(),
-                    dctx->getFileEntries().end(),
-                    group->getFileCompletedLengths());
+                    dctx->getFileEntries().end(), dctx->getTotalLength(),
+                    dctx->getPieceLength(), group->getPieceStorage());
     return res;
   }
-  virtual int getNumFiles() override
+  virtual int getNumFiles() CXX11_OVERRIDE
   {
     const std::shared_ptr<DownloadContext>& dctx = group->getDownloadContext();
     return dctx->getFileEntries().size();
   }
-  virtual FileData getFile(int index) override
+  virtual FileData getFile(int index) CXX11_OVERRIDE
   {
-#ifdef ENABLE_BITTORRENT
-    if (group->getBtDownload()) {
-      return createBtFileData(
-          group->getBtDownload()->snapshot().files.at(index - 1), index);
-    }
-#endif
     const std::shared_ptr<DownloadContext>& dctx = group->getDownloadContext();
-    const auto completedLengths = group->getFileCompletedLengths();
-    return createFileData(dctx->getFileEntries().at(index - 1), index,
-                          completedLengths.at(index - 1));
+    BitfieldMan bf(dctx->getPieceLength(), dctx->getTotalLength());
+    const std::shared_ptr<PieceStorage>& ps = group->getPieceStorage();
+    if (ps) {
+      bf.setBitfield(ps->getBitfield(), ps->getBitfieldLength());
+    }
+    return createFileData(dctx->getFileEntries()[index - 1], index, &bf);
   }
-  virtual BtMetaInfoData getBtMetaInfo() override
+  virtual BtMetaInfoData getBtMetaInfo() CXX11_OVERRIDE
   {
     BtMetaInfoData res;
 #ifdef ENABLE_BITTORRENT
     if (group->getDownloadContext()->hasAttribute(CTX_ATTR_BT)) {
-      auto torrentAttrs = static_cast<BtMetadata*>(
-          group->getDownloadContext()->getAttribute(CTX_ATTR_BT).get());
-      return createBtMetaInfo(torrentAttrs, group->getBtDownload()->snapshot());
+      auto torrentAttrs =
+          bittorrent::getTorrentAttrs(group->getDownloadContext());
+      res.announceList = torrentAttrs->announceList;
+      res.comment = torrentAttrs->comment;
+      res.creationDate = torrentAttrs->creationDate;
+      res.mode = torrentAttrs->mode;
+      if (!torrentAttrs->metadata.empty()) {
+        res.name = torrentAttrs->name;
+      }
     }
     else
 #endif // ENABLE_BITTORRENT
@@ -826,11 +783,11 @@ struct RequestGroupDH : public DownloadHandle {
     }
     return res;
   }
-  virtual const std::string& getOption(const std::string& name) override
+  virtual const std::string& getOption(const std::string& name) CXX11_OVERRIDE
   {
     return getRequestOption(group->getOption(), name);
   }
-  virtual KeyVals getOptions() override
+  virtual KeyVals getOptions() CXX11_OVERRIDE
   {
     return getRequestOptions(group->getOption());
   }
@@ -843,7 +800,7 @@ namespace {
 struct DownloadResultDH : public DownloadHandle {
   DownloadResultDH(std::shared_ptr<DownloadResult> dr) : dr(std::move(dr)) {}
   virtual ~DownloadResultDH() = default;
-  virtual DownloadStatus getStatus() override
+  virtual DownloadStatus getStatus() CXX11_OVERRIDE
   {
     switch (dr->result) {
     case error_code::FINISHED:
@@ -854,67 +811,55 @@ struct DownloadResultDH : public DownloadHandle {
       return DOWNLOAD_ERROR;
     }
   }
-  virtual int64_t getTotalLength() override { return dr->totalLength; }
-  virtual int64_t getCompletedLength() override { return dr->completedLength; }
-  virtual int64_t getUploadLength() override { return dr->uploadLength; }
-  virtual std::string getBitfield() override { return dr->bitfield; }
-  virtual int getDownloadSpeed() override { return 0; }
-  virtual int getUploadSpeed() override { return 0; }
-  virtual const std::string& getInfoHash() override { return dr->infoHash; }
-  virtual size_t getPieceLength() override { return dr->pieceLength; }
-  virtual int getNumPieces() override { return dr->numPieces; }
-  virtual int getConnections() override { return 0; }
-  virtual int getErrorCode() override { return dr->result; }
-  virtual const std::vector<A2Gid>& getFollowedBy() override
+  virtual int64_t getTotalLength() CXX11_OVERRIDE { return dr->totalLength; }
+  virtual int64_t getCompletedLength() CXX11_OVERRIDE
+  {
+    return dr->completedLength;
+  }
+  virtual int64_t getUploadLength() CXX11_OVERRIDE { return dr->uploadLength; }
+  virtual std::string getBitfield() CXX11_OVERRIDE { return dr->bitfield; }
+  virtual int getDownloadSpeed() CXX11_OVERRIDE { return 0; }
+  virtual int getUploadSpeed() CXX11_OVERRIDE { return 0; }
+  virtual const std::string& getInfoHash() CXX11_OVERRIDE
+  {
+    return dr->infoHash;
+  }
+  virtual size_t getPieceLength() CXX11_OVERRIDE { return dr->pieceLength; }
+  virtual int getNumPieces() CXX11_OVERRIDE { return dr->numPieces; }
+  virtual int getConnections() CXX11_OVERRIDE { return 0; }
+  virtual int getErrorCode() CXX11_OVERRIDE { return dr->result; }
+  virtual const std::vector<A2Gid>& getFollowedBy() CXX11_OVERRIDE
   {
     return dr->followedBy;
   }
-  virtual A2Gid getFollowing() override { return dr->following; }
-  virtual A2Gid getBelongsTo() override { return dr->belongsTo; }
-  virtual const std::string& getDir() override { return dr->dir; }
-  virtual std::vector<FileData> getFiles() override
+  virtual A2Gid getFollowing() CXX11_OVERRIDE { return dr->following; }
+  virtual A2Gid getBelongsTo() CXX11_OVERRIDE { return dr->belongsTo; }
+  virtual const std::string& getDir() CXX11_OVERRIDE { return dr->dir; }
+  virtual std::vector<FileData> getFiles() CXX11_OVERRIDE
   {
     std::vector<FileData> res;
-#ifdef ENABLE_BITTORRENT
-    if (!dr->btSnapshot.files.empty()) {
-      int index = 1;
-      for (const auto& file : dr->btSnapshot.files) {
-        res.push_back(createBtFileData(file, index++));
-      }
-      return res;
-    }
-#endif
     createFileEntry(std::back_inserter(res), dr->fileEntries.begin(),
-                    dr->fileEntries.end(), dr->fileCompletedLengths);
+                    dr->fileEntries.end(), dr->totalLength, dr->pieceLength,
+                    dr->bitfield);
     return res;
   }
-  virtual int getNumFiles() override { return dr->fileEntries.size(); }
-  virtual FileData getFile(int index) override
+  virtual int getNumFiles() CXX11_OVERRIDE { return dr->fileEntries.size(); }
+  virtual FileData getFile(int index) CXX11_OVERRIDE
   {
-#ifdef ENABLE_BITTORRENT
-    if (!dr->btSnapshot.files.empty()) {
-      return createBtFileData(dr->btSnapshot.files.at(index - 1), index);
-    }
-#endif
-    return createFileData(dr->fileEntries.at(index - 1), index,
-                          dr->fileCompletedLengths.at(index - 1));
+    BitfieldMan bf(dr->pieceLength, dr->totalLength);
+    bf.setBitfield(reinterpret_cast<const unsigned char*>(dr->bitfield.data()),
+                   dr->bitfield.size());
+    return createFileData(dr->fileEntries[index - 1], index, &bf);
   }
-  virtual BtMetaInfoData getBtMetaInfo() override
+  virtual BtMetaInfoData getBtMetaInfo() CXX11_OVERRIDE
   {
-#ifdef ENABLE_BITTORRENT
-    if (dr->attrs.size() > CTX_ATTR_BT && dr->attrs[CTX_ATTR_BT]) {
-      return createBtMetaInfo(
-          static_cast<BtMetadata*>(dr->attrs[CTX_ATTR_BT].get()),
-          dr->btSnapshot);
-    }
-#endif
     return BtMetaInfoData();
   }
-  virtual const std::string& getOption(const std::string& name) override
+  virtual const std::string& getOption(const std::string& name) CXX11_OVERRIDE
   {
     return getRequestOption(dr->option, name);
   }
-  virtual KeyVals getOptions() override
+  virtual KeyVals getOptions() CXX11_OVERRIDE
   {
     return getRequestOptions(dr->option);
   }

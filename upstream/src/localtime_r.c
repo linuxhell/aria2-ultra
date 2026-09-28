@@ -33,20 +33,15 @@
  */
 /* copyright --> */
 
-#ifdef _WIN32
-#  include <windows.h>
-#endif
-#include "localtime_r.h"
-#include <string.h>
 #include <time.h>
 #include <stdlib.h>
 
 #ifdef __MINGW32__
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
+#  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
 #endif // __MINGW32__
+
+#include "localtime_r.h"
 
 #ifdef __MINGW32__
 

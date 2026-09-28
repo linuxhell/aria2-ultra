@@ -72,7 +72,7 @@ public:
 
   virtual ~HttpServerBodyCommand();
 
-  virtual bool execute() override;
+  virtual bool execute() CXX11_OVERRIDE;
 };
 
 } // namespace aria2

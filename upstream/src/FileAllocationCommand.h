@@ -57,9 +57,9 @@ public:
 
   virtual ~FileAllocationCommand();
 
-  virtual bool executeInternal() override;
+  virtual bool executeInternal() CXX11_OVERRIDE;
 
-  virtual bool handleException(Exception& e) override;
+  virtual bool handleException(Exception& e) CXX11_OVERRIDE;
 };
 
 } // namespace aria2

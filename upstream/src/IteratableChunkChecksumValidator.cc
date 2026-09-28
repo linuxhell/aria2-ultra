@@ -32,28 +32,25 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "DiskAdaptor.h"
 #include "IteratableChunkChecksumValidator.h"
-#include <algorithm>
-#include <cstdint>
-#include <memory>
-#include <string>
 
 #include <array>
 #include <cstring>
 #include <cstdlib>
 
-#include "support/Encoding.h"
-#include "a2functional.h"
-#include "fmt.h"
+#include "util.h"
 #include "message.h"
-#include "DlAbortEx.h"
+#include "DiskAdaptor.h"
+#include "FileEntry.h"
 #include "RecoverableException.h"
 #include "DownloadContext.h"
 #include "PieceStorage.h"
 #include "BitfieldMan.h"
-#include "Log.h"
+#include "LogFactory.h"
+#include "Logger.h"
 #include "MessageDigest.h"
+#include "fmt.h"
+#include "DlAbortEx.h"
 
 namespace aria2 {
 
@@ -80,7 +77,7 @@ void IteratableChunkChecksumValidator::validateChunk()
         bitfield_->setBit(currentIndex_);
       }
       else {
-        A2_LOG_DEBUG(
+        A2_LOG_INFO(
             fmt(EX_INVALID_CHUNK_CHECKSUM,
                 static_cast<unsigned long>(currentIndex_),
                 static_cast<int64_t>(getCurrentOffset()),
@@ -90,7 +87,7 @@ void IteratableChunkChecksumValidator::validateChunk()
       }
     }
     catch (RecoverableException& ex) {
-      A2_LOG_TRACE_EX(fmt("Caught exception while validating piece index=%lu."
+      A2_LOG_DEBUG_EX(fmt("Caught exception while validating piece index=%lu."
                           " Some part of file may be missing."
                           " Continue operation.",
                           static_cast<unsigned long>(currentIndex_)),

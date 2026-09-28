@@ -33,15 +33,13 @@
  */
 /* copyright --> */
 #include "Request.h"
-#include "uri_split.h"
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
 
 #include <cassert>
+#include <utility>
 
-#include "support/Text.h"
+#include "util.h"
+#include "fmt.h"
+#include "A2STR.h"
 #include "uri.h"
 #include "PeerStat.h"
 #include "wallclock.h"
@@ -64,8 +62,7 @@ Request::Request()
       maxPipelinedRequest_(1),
       removalRequested_(false),
       connectedPort_(0),
-      wakeTime_(global::wallclock()),
-      resetTryCountAfterWake_(false)
+      wakeTime_(global::wallclock())
 {
 }
 
@@ -94,7 +91,7 @@ bool Request::setUri(const std::string& uri)
 bool Request::resetUri()
 {
   supportsPersistentConnection_ = true;
-  setConnectedAddrInfo("", "", 0);
+  setConnectedAddrInfo(A2STR::NIL, A2STR::NIL, 0);
   return parseUri(uri_);
 }
 

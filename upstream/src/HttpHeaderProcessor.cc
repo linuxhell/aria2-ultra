@@ -33,15 +33,16 @@
  */
 /* copyright --> */
 #include "HttpHeaderProcessor.h"
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
+
+#include <vector>
 
 #include "HttpHeader.h"
-#include "support/Text.h"
-#include "a2functional.h"
+#include "message.h"
+#include "util.h"
+#include "DlRetryEx.h"
 #include "DlAbortEx.h"
+#include "A2STR.h"
+#include "error_code.h"
 
 namespace aria2 {
 
@@ -360,14 +361,8 @@ bool HttpHeaderProcessor::parse(const unsigned char* data, size_t length)
       break;
 
     case FIELD_NAME:
-      if (util::isLws(c)) {
+      if (util::isLws(c) || util::isCRLF(c)) {
         throw DL_ABORT_EX("Bad HTTP header: missing ':'");
-      }
-
-      if (util::isCRLF(c)) {
-        lastFieldName_.clear();
-        state_ = c == '\n' ? PREV_FIELD_NAME : PREV_EOL;
-        break;
       }
 
       if (c == ':') {

@@ -33,23 +33,21 @@
  */
 /* copyright --> */
 #include "ChecksumCheckIntegrityEntry.h"
-#include "a2functional.h"
-#include "error_code.h"
-#include <memory>
-#include <utility>
-#include <vector>
 #include "RequestGroup.h"
 #include "DownloadContext.h"
+#include "FileEntry.h"
 #include "IteratableChecksumValidator.h"
 #include "DownloadEngine.h"
-#include "Command.h"
+#include "PieceStorage.h"
 #include "FileAllocationEntry.h"
+#include "StreamFileAllocationEntry.h"
 
 namespace aria2 {
 
 ChecksumCheckIntegrityEntry::ChecksumCheckIntegrityEntry(
     RequestGroup* requestGroup, std::unique_ptr<Command> nextCommand)
-    : CheckIntegrityEntry{requestGroup, std::move(nextCommand)}
+    : CheckIntegrityEntry{requestGroup, std::move(nextCommand)},
+      redownload_{false}
 {
 }
 
@@ -74,27 +72,21 @@ void ChecksumCheckIntegrityEntry::initValidator()
 void ChecksumCheckIntegrityEntry::onDownloadFinished(
     std::vector<std::unique_ptr<Command>>& commands, DownloadEngine* e)
 {
-  if (nextFileAllocationEntry_) {
-    proceedFileAllocation(commands, std::move(nextFileAllocationEntry_), e);
-    return;
-  }
-  if (getNextCommand()) {
-    getNextCommand()->setStatus(Command::STATUS_ONESHOT_REALTIME);
-    commands.push_back(popNextCommand());
-    e->setNoWait(true);
-  }
 }
 
 void ChecksumCheckIntegrityEntry::onDownloadIncomplete(
     std::vector<std::unique_ptr<Command>>& commands, DownloadEngine* e)
 {
-  getRequestGroup()->setLastErrorCode(error_code::CHECKSUM_ERROR);
-}
+  if (redownload_) {
+    proceedFileAllocation(commands,
+                          make_unique<StreamFileAllocationEntry>(
+                              getRequestGroup(), popNextCommand()),
+                          e);
+    return;
+  }
 
-void ChecksumCheckIntegrityEntry::setNextFileAllocationEntry(
-    std::unique_ptr<FileAllocationEntry> entry)
-{
-  nextFileAllocationEntry_ = std::move(entry);
+  // If we don't redownload, set error code to indicate checksum error
+  getRequestGroup()->setLastErrorCode(error_code::CHECKSUM_ERROR);
 }
 
 } // namespace aria2

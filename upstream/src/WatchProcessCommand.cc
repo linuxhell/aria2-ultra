@@ -50,17 +50,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
  * MA 02110-1301, USA.
  */
-#ifdef _WIN32
-#  include <windows.h>
-#endif
 #include "WatchProcessCommand.h"
-#include "Command.h"
-#include "TimeBasedCommand.h"
-#include "a2functional.h"
-#include <cinttypes>
 #include "DownloadEngine.h"
 #include "RequestGroupMan.h"
-#include "Log.h"
+#include "LogFactory.h"
+#include "Logger.h"
 #include "fmt.h"
 
 #ifdef __APPLE__
@@ -89,6 +83,7 @@ void WatchProcessCommand::process()
 {
   // Check process pid_ is running. If it is not running, shutdown
   // aria2.
+  A2_LOG_DEBUG(fmt("Checking proess %u", pid_));
   bool waiting = true;
 #ifdef _WIN32
   HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid_);
@@ -117,9 +112,9 @@ void WatchProcessCommand::process()
   }
 #endif
   if (!waiting) {
-    A2_LOG_DEBUG(fmt("CUID#%" PRId64
-                     " - Process %u is not running. Commencing shutdown.",
-                     getCuid(), pid_));
+    A2_LOG_INFO(fmt("CUID#%" PRId64
+                    " - Process %u is not running. Commencing shutdown.",
+                    getCuid(), pid_));
     if (forceHalt_) {
       getDownloadEngine()->requestForceHalt();
     }

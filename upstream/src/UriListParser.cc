@@ -33,21 +33,15 @@
  */
 /* copyright --> */
 #include "UriListParser.h"
-#include "IOFile.h"
-#include "common.h"
-#include <iterator>
-#include <memory>
-#include <string>
-#include <vector>
 
 #include <cstring>
 #include <sstream>
 
-#include "support/Text.h"
-#include "a2functional.h"
-#include "DlAbortEx.h"
+#include "util.h"
 #include "Option.h"
+#include "OptionHandlerFactory.h"
 #include "OptionHandler.h"
+#include "A2STR.h"
 #include "BufferedFile.h"
 #include "OptionParser.h"
 
@@ -100,7 +94,7 @@ void UriListParser::parseNext(std::vector<std::string>& uris, Option& op)
           break;
         }
       }
-      optparser->parseInternal(op, ss);
+      optparser->parse(op, ss);
       return;
     }
     line_ = fp_->getLine();

@@ -75,7 +75,7 @@ public:
 
   virtual ~ConsoleStatCalc() = default;
 
-  virtual void calculateStat(const DownloadEngine* e) override;
+  virtual void calculateStat(const DownloadEngine* e) CXX11_OVERRIDE;
 
   void setReadoutVisibility(bool visibility)
   {

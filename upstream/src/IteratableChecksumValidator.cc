@@ -32,23 +32,21 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "DiskAdaptor.h"
 #include "IteratableChecksumValidator.h"
-#include <cstdint>
-#include <memory>
-#include <string>
 
 #include <array>
 #include <cstdlib>
 
-#include "support/Encoding.h"
-#include "a2functional.h"
-#include "fmt.h"
+#include "util.h"
+#include "message.h"
 #include "PieceStorage.h"
 #include "MessageDigest.h"
+#include "DiskAdaptor.h"
+#include "FileEntry.h"
 #include "BitfieldMan.h"
 #include "DownloadContext.h"
-#include "Log.h"
+#include "LogFactory.h"
+#include "fmt.h"
 
 namespace aria2 {
 
@@ -77,9 +75,9 @@ void IteratableChecksumValidator::validateChunk()
       dctx_->setChecksumVerified(true);
     }
     else {
-      A2_LOG_DEBUG(fmt("Checksum validation failed. expected=%s, actual=%s",
-                       util::toHex(dctx_->getDigest()).c_str(),
-                       util::toHex(actualDigest).c_str()));
+      A2_LOG_INFO(fmt("Checksum validation failed. expected=%s, actual=%s",
+                      util::toHex(dctx_->getDigest()).c_str(),
+                      util::toHex(actualDigest).c_str()));
       BitfieldMan bitfield(dctx_->getPieceLength(), dctx_->getTotalLength());
       pieceStorage_->setBitfield(bitfield.getBitfield(),
                                  bitfield.getBitfieldLength());

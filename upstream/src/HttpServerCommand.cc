@@ -33,14 +33,12 @@
  */
 /* copyright --> */
 #include "HttpServerCommand.h"
-#include "Command.h"
-#include <cinttypes>
-#include <memory>
 #include "SocketCore.h"
 #include "DownloadEngine.h"
 #include "HttpServer.h"
 #include "HttpHeader.h"
-#include "Log.h"
+#include "Logger.h"
+#include "LogFactory.h"
 #include "RequestGroup.h"
 #include "RequestGroupMan.h"
 #include "HttpServerBodyCommand.h"
@@ -48,10 +46,9 @@
 #include "RecoverableException.h"
 #include "prefs.h"
 #include "Option.h"
-#include "a2functional.h"
-#include "fmt.h"
-#include "message.h"
+#include "util.h"
 #include "wallclock.h"
+#include "fmt.h"
 #include "SocketRecvBuffer.h"
 #include "base64.h"
 #include "MessageDigest.h"
@@ -74,6 +71,8 @@ HttpServerCommand::HttpServerCommand(cuid_t cuid, DownloadEngine* e,
   setStatus(Command::STATUS_ONESHOT_REALTIME);
   e_->addSocketForReadCheck(socket_, this);
   httpServer_->setSecure(secure);
+  httpServer_->setUsernamePassword(e_->getOption()->get(PREF_RPC_USER),
+                                   e_->getOption()->get(PREF_RPC_PASSWD));
   if (e_->getOption()->getAsBool(PREF_RPC_ALLOW_ORIGIN_ALL)) {
     httpServer_->setAllowOrigin("*");
   }
@@ -197,6 +196,18 @@ bool HttpServerCommand::execute()
         e_->addCommand(std::unique_ptr<Command>(this));
         return false;
       }
+      // CORS preflight request uses OPTIONS method. It is not
+      // restricted by authentication.
+      if (!httpServer_->authenticate() &&
+          httpServer_->getMethod() != "OPTIONS") {
+        httpServer_->disableKeepAlive();
+        httpServer_->feedResponse(
+            401, "WWW-Authenticate: Basic realm=\"aria2\"\r\n");
+        e_->addCommand(make_unique<HttpServerResponseCommand>(
+            getCuid(), httpServer_, e_, socket_));
+        e_->setNoWait(true);
+        return true;
+      }
       auto& header = httpServer_->getRequestHeader();
       if (header->fieldContains(HttpHeader::UPGRADE, "websocket") &&
           header->fieldContains(HttpHeader::CONNECTION, "upgrade")) {
@@ -234,10 +245,10 @@ bool HttpServerCommand::execute()
       else {
         if (e_->getOption()->getAsInt(PREF_RPC_MAX_REQUEST_SIZE) <
             httpServer_->getContentLength()) {
-          A2_LOG_DEBUG(fmt("Request too long. ContentLength=%" PRId64 "."
-                           " See --rpc-max-request-size option to loose"
-                           " this limitation.",
-                           httpServer_->getContentLength()));
+          A2_LOG_INFO(fmt("Request too long. ContentLength=%" PRId64 "."
+                          " See --rpc-max-request-size option to loose"
+                          " this limitation.",
+                          httpServer_->getContentLength()));
           return true;
         }
         e_->addCommand(make_unique<HttpServerBodyCommand>(
@@ -248,7 +259,7 @@ bool HttpServerCommand::execute()
     }
     else {
       if (timeoutTimer_.difference(global::wallclock()) >= 30_s) {
-        A2_LOG_DEBUG("HTTP request timeout.");
+        A2_LOG_INFO("HTTP request timeout.");
         return true;
       }
       else {
@@ -258,12 +269,10 @@ bool HttpServerCommand::execute()
     }
   }
   catch (RecoverableException& e) {
-    if (std::string(e.what()) != EX_EOF_FROM_PEER) {
-      A2_LOG_DEBUG_EX(fmt("CUID#%" PRId64
-                          " - Error occurred while reading HTTP request",
-                          getCuid()),
-                      e);
-    }
+    A2_LOG_INFO_EX(fmt("CUID#%" PRId64
+                       " - Error occurred while reading HTTP request",
+                       getCuid()),
+                   e);
     return true;
   }
 }

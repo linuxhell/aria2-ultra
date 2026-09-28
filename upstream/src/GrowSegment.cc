@@ -33,10 +33,8 @@
  */
 /* copyright --> */
 #include "GrowSegment.h"
-#include <cstdint>
-#include <memory>
-#include <string>
 #include "Piece.h"
+#include "A2STR.h"
 
 namespace aria2 {
 
@@ -54,7 +52,7 @@ void GrowSegment::updateWrittenLength(int64_t bytes)
   piece_->setAllBlock();
 }
 
-std::string GrowSegment::getDigest() { return ""; }
+std::string GrowSegment::getDigest() { return A2STR::NIL; }
 
 void GrowSegment::clear(WrDiskCache* diskCache)
 {

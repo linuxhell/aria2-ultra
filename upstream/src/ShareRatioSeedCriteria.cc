@@ -33,9 +33,8 @@
  */
 /* copyright --> */
 #include "ShareRatioSeedCriteria.h"
-#include <cstdint>
-#include <memory>
 #include "DownloadContext.h"
+#include "BtRuntime.h"
 #include "PieceStorage.h"
 
 namespace aria2 {
@@ -57,19 +56,21 @@ bool ShareRatioSeedCriteria::evaluate()
     return true;
   }
   int64_t uploadLength =
+      btRuntime_->getUploadLengthAtStartup() +
       downloadContext_->getNetStat().getSessionUploadLength();
   return ratio_ <= 1.0 * uploadLength / completedLength;
+}
+
+void ShareRatioSeedCriteria::setBtRuntime(
+    const std::shared_ptr<BtRuntime>& btRuntime)
+{
+  btRuntime_ = btRuntime;
 }
 
 void ShareRatioSeedCriteria::setPieceStorage(
     const std::shared_ptr<PieceStorage>& pieceStorage)
 {
   pieceStorage_ = pieceStorage;
-}
-
-PieceStorage* ShareRatioSeedCriteria::getPieceStorage() const
-{
-  return pieceStorage_.get();
 }
 
 } // namespace aria2

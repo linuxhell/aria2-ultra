@@ -33,24 +33,11 @@
  */
 /* copyright --> */
 #include "HttpHeader.h"
-#include <algorithm>
-#include <cstdint>
-#include <cstring>
-#include <iterator>
-#include <limits>
-#include <map>
-#include <string>
-#include <utility>
-#include <vector>
-#include "a2io.h"
 #include "Range.h"
-#include "support/Text.h"
-#include "support/Numbers.h"
-#include "fmt.h"
-#include "message.h"
-#include "DlAbortEx.h"
-#include "a2iterator.h"
+#include "util.h"
+#include "A2STR.h"
 #include "DownloadFailureException.h"
+#include "array_fun.h"
 
 namespace aria2 {
 
@@ -72,8 +59,7 @@ const std::string& HttpHeader::find(int hdKey) const
 {
   auto itr = table_.find(hdKey);
   if (itr == table_.end()) {
-    static const std::string empty;
-    return empty;
+    return A2STR::NIL;
   }
   else {
     return (*itr).second;
