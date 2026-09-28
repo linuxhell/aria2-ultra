@@ -70,6 +70,8 @@ class BittorrentHelperTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testHybridMetadata);
   CPPUNIT_TEST(testV2Magnets);
   CPPUNIT_TEST(testInvalidV2Metadata);
+  CPPUNIT_TEST(testV2Merkle);
+  CPPUNIT_TEST(testV2Multifile);
   CPPUNIT_TEST(testExtractPeerFromString);
   CPPUNIT_TEST(testExtractPeerFromList);
   CPPUNIT_TEST(testExtract2PeersFromList);
@@ -133,6 +135,8 @@ public:
   void testHybridMetadata();
   void testV2Magnets();
   void testInvalidV2Metadata();
+  void testV2Merkle();
+  void testV2Multifile();
   void testExtractPeerFromString();
   void testExtractPeerFromList();
   void testExtract2PeersFromList();
@@ -218,6 +222,57 @@ void BittorrentHelperTest::testInvalidV2Metadata()
   malformed.replace(pos, 9, "7:../evil");
   CPPUNIT_ASSERT_THROW(loadFromMemory(malformed, ctx, option_, "invalid"),
                        RecoverableException);
+}
+
+void BittorrentHelperTest::testV2Merkle()
+{
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+      util::toHex(computeV2MerkleRoot("abc", 1)));
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("12620209a91815c655187f84791209a8f49aa153e66040d44618632e0001c4a1"),
+      util::toHex(computeV2MerkleRoot("abc", 2)));
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("b9e3939352e7a23b14a11e2c0eefa27931b0d315cc38297f2b44f796518e7274"),
+      util::toHex(computeV2MerkleRoot(std::string(16384, 'a') + "b", 2)));
+  CPPUNIT_ASSERT_THROW(computeV2MerkleRoot("abc", 3), RecoverableException);
+  const auto smallRoot = computeV2MerkleRoot("abc", 1);
+  CPPUNIT_ASSERT(verifyV2Piece("abc", 0, 16384, smallRoot, ""));
+  CPPUNIT_ASSERT(!verifyV2Piece("abd", 0, 16384, smallRoot, ""));
+  const std::string first(16384, 'a');
+  const std::string second = "b";
+  const auto layer2 = computeV2MerkleRoot(first, 1) +
+                      computeV2MerkleRoot(second, 1);
+  const auto root2 = computeV2MerkleRoot(first + second, 2);
+  CPPUNIT_ASSERT(verifyV2PieceLayer(layer2, root2, 16384));
+  CPPUNIT_ASSERT(verifyV2Piece(first, 0, 16384, root2, layer2));
+  CPPUNIT_ASSERT(verifyV2Piece(second, 1, 16384, root2, layer2));
+  CPPUNIT_ASSERT(!verifyV2Piece("c", 1, 16384, root2, layer2));
+
+  auto ctx = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/v2_only.torrent", ctx, option_);
+  auto attrs = getTorrentAttrs(ctx);
+  const auto& root = attrs->v2FileEntries[0].piecesRoot;
+  auto layer = attrs->pieceLayers.at(root);
+  CPPUNIT_ASSERT(verifyV2PieceLayer(layer, root, ctx->getPieceLength()));
+  layer[0] ^= 1;
+  CPPUNIT_ASSERT(!verifyV2PieceLayer(layer, root, ctx->getPieceLength()));
+}
+
+void BittorrentHelperTest::testV2Multifile()
+{
+  auto ctx = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/v2_multiple_files.torrent", ctx, option_);
+  auto attrs = getTorrentAttrs(ctx);
+  CPPUNIT_ASSERT_EQUAL(size_t(3), attrs->v2FileEntries.size());
+  CPPUNIT_ASSERT_EQUAL(size_t(3), attrs->pieceLayers.size());
+  CPPUNIT_ASSERT_EQUAL(size_t(3), ctx->getFileEntries().size());
+  CPPUNIT_ASSERT_EQUAL(int64_t(1048576000), ctx->getFileEntries()[1]->getOffset());
+  CPPUNIT_ASSERT_EQUAL(int64_t(2098200576), ctx->getFileEntries()[2]->getOffset());
+  for (const auto& file : attrs->v2FileEntries) {
+    CPPUNIT_ASSERT(verifyV2PieceLayer(attrs->pieceLayers.at(file.piecesRoot),
+                                      file.piecesRoot, ctx->getPieceLength()));
+  }
 }
 
 void BittorrentHelperTest::testGetInfoHash()

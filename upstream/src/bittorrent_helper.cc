@@ -100,6 +100,90 @@ const std::string MULTI("multi");
 const std::string SINGLE("single");
 
 namespace {
+std::string sha256Bytes(const void* data, size_t length)
+{
+  unsigned char hash[32];
+  auto digest = MessageDigest::create("sha-256");
+  message_digest::digest(hash, sizeof(hash), digest.get(), data, length);
+  return std::string(hash, hash + sizeof(hash));
+}
+
+std::string merkleRoot(std::vector<std::string> hashes)
+{
+  while (hashes.size() > 1) {
+    for (size_t i = 0; i < hashes.size() / 2; ++i) {
+      const std::string pair = hashes[2 * i] + hashes[2 * i + 1];
+      hashes[i] = sha256Bytes(pair.data(), pair.size());
+    }
+    hashes.resize(hashes.size() / 2);
+  }
+  return hashes.front();
+}
+} // namespace
+
+std::string computeV2MerkleRoot(const std::string& data, size_t leafCount)
+{
+  constexpr size_t BLOCK_SIZE = 16 * 1024;
+  if (!leafCount || (leafCount & (leafCount - 1)) ||
+      data.size() / BLOCK_SIZE > leafCount ||
+      (data.size() / BLOCK_SIZE == leafCount && data.size() % BLOCK_SIZE)) {
+    throw DL_ABORT_EX2("Invalid BEP 52 Merkle leaf count.",
+                       error_code::BITTORRENT_PARSE_ERROR);
+  }
+  std::vector<std::string> hashes(leafCount, std::string(32, '\0'));
+  for (size_t offset = 0, i = 0; offset < data.size();
+       offset += BLOCK_SIZE, ++i) {
+    hashes[i] = sha256Bytes(data.data() + offset,
+                            std::min(BLOCK_SIZE, data.size() - offset));
+  }
+  return merkleRoot(std::move(hashes));
+}
+
+bool verifyV2PieceLayer(const std::string& layer,
+                        const std::string& piecesRoot, size_t pieceLength)
+{
+  if (piecesRoot.size() != 32 || layer.empty() || layer.size() % 32 ||
+      pieceLength < 16384 || (pieceLength & (pieceLength - 1))) {
+    return false;
+  }
+  const size_t count = layer.size() / 32;
+  size_t width = 1;
+  while (width < count) {
+    if (width > SIZE_MAX / 2) return false;
+    width *= 2;
+  }
+  // At the piece layer, an absent piece covers an entire zero-leaf subtree.
+  std::string zero(32, '\0');
+  for (size_t blocks = pieceLength / 16384; blocks > 1; blocks /= 2) {
+    zero = sha256Bytes((zero + zero).data(), 64);
+  }
+  std::vector<std::string> hashes(width, zero);
+  for (size_t i = 0; i < count; ++i) hashes[i] = layer.substr(i * 32, 32);
+  return merkleRoot(std::move(hashes)) == piecesRoot;
+}
+
+bool verifyV2Piece(const std::string& data, size_t pieceIndex,
+                   size_t pieceLength, const std::string& piecesRoot,
+                   const std::string& layer)
+{
+  if (data.empty() || data.size() > pieceLength ||
+      pieceLength < 16384 || (pieceLength & (pieceLength - 1)) ||
+      piecesRoot.size() != 32) return false;
+  size_t leaves = pieceLength / 16384;
+  if (layer.empty()) {
+    if (pieceIndex != 0) return false;
+    leaves = 1;
+    const size_t used = 1 + (data.size() - 1) / 16384;
+    while (leaves < used) leaves *= 2;
+    return computeV2MerkleRoot(data, leaves) == piecesRoot;
+  }
+  if (!verifyV2PieceLayer(layer, piecesRoot, pieceLength) ||
+      pieceIndex >= layer.size() / 32) return false;
+  return computeV2MerkleRoot(data, leaves) ==
+         layer.substr(pieceIndex * 32, 32);
+}
+
+namespace {
 void extractV2Tree(TorrentAttribute* torrent, const Dict* tree,
                    std::vector<std::string>& path)
 {
@@ -169,7 +253,8 @@ void extractV2Metadata(TorrentAttribute* torrent, const Dict* root,
       const uint64_t count = 1 + (static_cast<uint64_t>(file.length) - 1) /
                                       pieceLength;
       if (layer == torrent->pieceLayers.end() ||
-          layer->second.size() / 32 != count) {
+          layer->second.size() / 32 != count ||
+          !verifyV2PieceLayer(layer->second, file.piecesRoot, pieceLength)) {
         throw DL_ABORT_EX2("Missing or invalid BEP 52 piece layer.",
                            error_code::BITTORRENT_PARSE_ERROR);
       }

@@ -204,13 +204,15 @@ calcular a árvore de merkle SHA-256 e validar contra `piecesRoot`
 (arquivos maiores). Ainda uma função pura, testável isoladamente, sem
 integrar no motor de download.
 
-- [ ] Função utilitária de merkle tree (bottom-up, blocos de 16 KiB,
-  padding com hash de bloco zerado quando o arquivo não é múltiplo exato —
-  regra exata do BEP 52 para isso).
-- [ ] Tratamento de "padding files" entre arquivos no `file tree` (BEP 52
-  exige alinhamento de peça entre arquivos; verificar como o v1 já lida
-  com fronteiras de arquivo em `PieceedSegment`/`FileEntry` pra reusar).
-- [ ] Testes com vetores conhecidos (torrent de teste real, ou vetores de
+- [x] Função utilitária de merkle tree (bottom-up, blocos de 16 KiB,
+  folhas ausentes de 32 bytes zero; em camadas superiores usar a raiz da
+  subárvore composta dessas folhas zero, conforme a BEP 52).
+- [x] Alinhamento de offsets entre arquivos no `file tree` (BEP 52 exige
+  que cada arquivo não vazio comece em fronteira de peça). O vetor multifile
+  real valida os offsets; mapear os intervalos de padding para leitura e
+  escrita efetivas permanece na Fase 3. Híbridos preservam a lista v1
+  com seus padding files pelo caminho já existente.
+- [x] Testes com vetores conhecidos (torrent de teste real, ou vetores de
   teste da spec/libtorrent, pra garantir interoperabilidade correta desde
   o início — não inventar formato próprio).
 
@@ -262,9 +264,13 @@ Objetivo: aria2-ultra fala v2 de verdade com outros peers.
 - Fase 0: concluída.
 - Fase 1: parsing e hashes implementados e validados em Linux; downloads
   v2-only aguardam integridade e protocolo. Veja observação dos testes LPD.
-- Fases 2-6: não iniciadas.
+- Fase 2: funções puras de Merkle e verificação de peça/camada implementadas;
+  validadas com vetores SHA-256 e torrents v2-only/multifile reais do
+  libtorrent. A camada multifile revelou que o padding na altura de peça
+  precisa ser a raiz da subárvore zerada correspondente.
+- Fases 3-6: não iniciadas.
 
 ## Próximo passo concreto
 
-Implementar a Fase 2: utilitário de Merkle puro, com vetores de referência
-e validação de `piece layers`, antes de integrar a verificação ao download.
+Implementar a Fase 3: integrar a verificação de peça v2 ao armazenamento,
+mapear lacunas de alinhamento e preservar o fluxo v1 de torrents híbridos.

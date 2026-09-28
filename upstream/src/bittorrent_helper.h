@@ -249,6 +249,22 @@ std::string metadata2Torrent(const std::string& metadata,
 // Constructs BitTorrent Magnet URI using attrs.
 std::string torrent2Magnet(const TorrentAttribute* attrs);
 
+// BEP 52 uses SHA-256 over 16 KiB data blocks. Missing leaves in the
+// balanced tree are 32 zero bytes, rather than hashes of zero-filled data.
+// Returns a raw 32-byte hash; leafCount must be a nonzero power of two.
+std::string computeV2MerkleRoot(const std::string& data, size_t leafCount);
+
+// The piece layer contains consecutive 32-byte subtree roots. Validate
+// its balanced Merkle root against the file's pieces root.
+bool verifyV2PieceLayer(const std::string& layer,
+                        const std::string& piecesRoot, size_t pieceLength);
+
+// Verify a piece against a single-file root or a previously validated
+// piece layer. The caller supplies exactly the bytes of that piece.
+bool verifyV2Piece(const std::string& data, size_t pieceIndex,
+                   size_t pieceLength, const std::string& piecesRoot,
+                   const std::string& layer);
+
 // Removes announce URI in uris from attrs.  If uris contains '*', all
 // announce URIs are removed.
 void removeAnnounceUri(TorrentAttribute* attrs,
