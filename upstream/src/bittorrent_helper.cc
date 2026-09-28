@@ -183,6 +183,59 @@ bool verifyV2Piece(const std::string& data, size_t pieceIndex,
          layer.substr(pieceIndex * 32, 32);
 }
 
+bool locateV2Piece(const TorrentAttribute* torrent,
+                   const std::vector<std::shared_ptr<FileEntry>>& fileEntries,
+                   size_t pieceIndex, int64_t pieceLength, size_t& fileIndex,
+                   size_t& localPieceIndex, int64_t& localPieceLength)
+{
+  if (pieceLength <= 0 ||
+      fileEntries.size() != torrent->v2FileEntries.size()) {
+    return false;
+  }
+  const int64_t globalOffset = static_cast<int64_t>(pieceIndex) * pieceLength;
+  for (size_t i = 0; i < fileEntries.size(); ++i) {
+    const auto& fe = fileEntries[i];
+    if (fe->getLength() == 0) {
+      continue;
+    }
+    if (globalOffset >= fe->getOffset() && globalOffset < fe->getLastOffset()) {
+      const int64_t withinFile = globalOffset - fe->getOffset();
+      fileIndex = i;
+      localPieceIndex = static_cast<size_t>(withinFile / pieceLength);
+      localPieceLength =
+          std::min<int64_t>(pieceLength, fe->getLength() - withinFile);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool verifyV2PieceByGlobalIndex(
+    const TorrentAttribute* torrent,
+    const std::vector<std::shared_ptr<FileEntry>>& fileEntries,
+    size_t pieceIndex, int64_t pieceLength, const std::string& data)
+{
+  size_t fileIndex;
+  size_t localPieceIndex;
+  int64_t localPieceLength;
+  if (!locateV2Piece(torrent, fileEntries, pieceIndex, pieceLength, fileIndex,
+                     localPieceIndex, localPieceLength) ||
+      data.size() != static_cast<size_t>(localPieceLength)) {
+    return false;
+  }
+  const auto& file = torrent->v2FileEntries[fileIndex];
+  std::string layer;
+  if (file.length > pieceLength) {
+    auto it = torrent->pieceLayers.find(file.piecesRoot);
+    if (it == torrent->pieceLayers.end()) {
+      return false;
+    }
+    layer = it->second;
+  }
+  return verifyV2Piece(data, localPieceIndex, pieceLength, file.piecesRoot,
+                       layer);
+}
+
 namespace {
 void extractV2Tree(TorrentAttribute* torrent, const Dict* tree,
                    std::vector<std::string>& path)

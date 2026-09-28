@@ -38,8 +38,29 @@
 #include "DownloadContext.h"
 #include "PieceStorage.h"
 #include "a2functional.h"
+#ifdef ENABLE_BITTORRENT
+#  include "IteratableV2ChunkChecksumValidator.h"
+#  include "bittorrent_helper.h"
+#endif // ENABLE_BITTORRENT
 
 namespace aria2 {
+
+namespace {
+#ifdef ENABLE_BITTORRENT
+// A BEP 52 (v2) torrent with no usable v1 piece hash list: pure v2-only,
+// not hybrid. Hybrid torrents keep the full v1 hash list and are checked
+// the ordinary v1 way; see BT-V2-PLANO.md, Fase 3.
+bool isV2OnlyBt(const std::shared_ptr<DownloadContext>& dctx)
+{
+  if (!dctx->hasAttribute(CTX_ATTR_BT)) {
+    return false;
+  }
+  const auto* attrs = bittorrent::getTorrentAttrs(dctx);
+  return attrs->metaVersion == 2 && attrs->infoHash.empty() &&
+        !attrs->v2FileEntries.empty();
+}
+#endif // ENABLE_BITTORRENT
+} // namespace
 
 PieceHashCheckIntegrityEntry::PieceHashCheckIntegrityEntry(
     RequestGroup* requestGroup, std::unique_ptr<Command> nextCommand)
@@ -53,14 +74,29 @@ bool PieceHashCheckIntegrityEntry::isValidationReady()
 {
   const std::shared_ptr<DownloadContext>& dctx =
       getRequestGroup()->getDownloadContext();
+#ifdef ENABLE_BITTORRENT
+  if (isV2OnlyBt(dctx)) {
+    return true;
+  }
+#endif // ENABLE_BITTORRENT
   return dctx->isPieceHashVerificationAvailable();
 }
 
 void PieceHashCheckIntegrityEntry::initValidator()
 {
+  const std::shared_ptr<DownloadContext>& dctx =
+      getRequestGroup()->getDownloadContext();
+#ifdef ENABLE_BITTORRENT
+  if (isV2OnlyBt(dctx)) {
+    auto validator = make_unique<IteratableV2ChunkChecksumValidator>(
+        dctx, getRequestGroup()->getPieceStorage());
+    validator->init();
+    setValidator(std::move(validator));
+    return;
+  }
+#endif // ENABLE_BITTORRENT
   auto validator = make_unique<IteratableChunkChecksumValidator>(
-      getRequestGroup()->getDownloadContext(),
-      getRequestGroup()->getPieceStorage());
+      dctx, getRequestGroup()->getPieceStorage());
   validator->init();
   setValidator(std::move(validator));
 }

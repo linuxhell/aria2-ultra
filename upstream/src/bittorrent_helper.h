@@ -56,6 +56,7 @@ namespace aria2 {
 class DownloadContext;
 class Randomizer;
 class Option;
+class FileEntry;
 
 namespace bittorrent {
 
@@ -264,6 +265,32 @@ bool verifyV2PieceLayer(const std::string& layer,
 bool verifyV2Piece(const std::string& data, size_t pieceIndex,
                    size_t pieceLength, const std::string& piecesRoot,
                    const std::string& layer);
+
+// Locates the BEP 52 file that contains the global piece at pieceIndex,
+// assuming fileEntries was laid out by the v2 file tree extractor (each
+// file starts at a piece-aligned offset; see extractV2FileEntries).
+// torrent->v2FileEntries and fileEntries must have the same size and
+// order. Skips zero-length files, which occupy no piece. Returns false
+// if pieceIndex does not fall within any file (out of range). On
+// success, fileIndex indexes into both torrent->v2FileEntries and
+// fileEntries; localPieceIndex is the piece's 0-based index within that
+// file (what verifyV2Piece expects); localPieceLength is the number of
+// real bytes in that piece (pieceLength, except possibly less for the
+// last piece of the file).
+bool locateV2Piece(const TorrentAttribute* torrent,
+                   const std::vector<std::shared_ptr<FileEntry>>& fileEntries,
+                   size_t pieceIndex, int64_t pieceLength, size_t& fileIndex,
+                   size_t& localPieceIndex, int64_t& localPieceLength);
+
+// Convenience wrapper around locateV2Piece() + verifyV2Piece(): looks up
+// the piecesRoot/layer for the located file from torrent->pieceLayers
+// and verifies data (which must be exactly localPieceLength bytes, see
+// locateV2Piece) against it. Returns false if the piece cannot be
+// located, its file's layer is missing, or the hash does not match.
+bool verifyV2PieceByGlobalIndex(
+    const TorrentAttribute* torrent,
+    const std::vector<std::shared_ptr<FileEntry>>& fileEntries,
+    size_t pieceIndex, int64_t pieceLength, const std::string& data);
 
 // Removes announce URI in uris from attrs.  If uris contains '*', all
 // announce URIs are removed.

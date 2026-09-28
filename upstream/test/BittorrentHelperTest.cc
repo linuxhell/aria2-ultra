@@ -72,6 +72,8 @@ class BittorrentHelperTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testInvalidV2Metadata);
   CPPUNIT_TEST(testV2Merkle);
   CPPUNIT_TEST(testV2Multifile);
+  CPPUNIT_TEST(testV2LocatePiece);
+  CPPUNIT_TEST(testV2VerifyPieceByGlobalIndex);
   CPPUNIT_TEST(testExtractPeerFromString);
   CPPUNIT_TEST(testExtractPeerFromList);
   CPPUNIT_TEST(testExtract2PeersFromList);
@@ -137,6 +139,8 @@ public:
   void testInvalidV2Metadata();
   void testV2Merkle();
   void testV2Multifile();
+  void testV2LocatePiece();
+  void testV2VerifyPieceByGlobalIndex();
   void testExtractPeerFromString();
   void testExtractPeerFromList();
   void testExtract2PeersFromList();
@@ -273,6 +277,105 @@ void BittorrentHelperTest::testV2Multifile()
     CPPUNIT_ASSERT(verifyV2PieceLayer(attrs->pieceLayers.at(file.piecesRoot),
                                       file.piecesRoot, ctx->getPieceLength()));
   }
+}
+
+void BittorrentHelperTest::testV2LocatePiece()
+{
+  auto ctx = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/v2_multiple_files.torrent", ctx, option_);
+  auto attrs = getTorrentAttrs(ctx);
+  const auto& fileEntries = ctx->getFileEntries();
+  const int64_t pieceLength = ctx->getPieceLength();
+  size_t fileIndex, localPieceIndex;
+  int64_t localPieceLength;
+
+  // First piece of the first file.
+  CPPUNIT_ASSERT(locateV2Piece(attrs, fileEntries, 0, pieceLength, fileIndex,
+                               localPieceIndex, localPieceLength));
+  CPPUNIT_ASSERT_EQUAL(size_t(0), fileIndex);
+  CPPUNIT_ASSERT_EQUAL(size_t(0), localPieceIndex);
+  CPPUNIT_ASSERT_EQUAL(pieceLength, localPieceLength);
+
+  // The piece exactly at the second file's (piece-aligned) start offset.
+  const size_t secondFileFirstPiece =
+      static_cast<size_t>(fileEntries[1]->getOffset() / pieceLength);
+  CPPUNIT_ASSERT(locateV2Piece(attrs, fileEntries, secondFileFirstPiece,
+                               pieceLength, fileIndex, localPieceIndex,
+                               localPieceLength));
+  CPPUNIT_ASSERT_EQUAL(size_t(1), fileIndex);
+  CPPUNIT_ASSERT_EQUAL(size_t(0), localPieceIndex);
+
+  // The piece exactly at the third file's start offset.
+  const size_t thirdFileFirstPiece =
+      static_cast<size_t>(fileEntries[2]->getOffset() / pieceLength);
+  CPPUNIT_ASSERT(locateV2Piece(attrs, fileEntries, thirdFileFirstPiece,
+                               pieceLength, fileIndex, localPieceIndex,
+                               localPieceLength));
+  CPPUNIT_ASSERT_EQUAL(size_t(2), fileIndex);
+  CPPUNIT_ASSERT_EQUAL(size_t(0), localPieceIndex);
+
+  // The very last piece of the whole torrent may be shorter than
+  // pieceLength.
+  const size_t lastPiece = static_cast<size_t>(ctx->getNumPieces() - 1);
+  CPPUNIT_ASSERT(locateV2Piece(attrs, fileEntries, lastPiece, pieceLength,
+                               fileIndex, localPieceIndex, localPieceLength));
+  CPPUNIT_ASSERT_EQUAL(size_t(2), fileIndex);
+  CPPUNIT_ASSERT(localPieceLength <= pieceLength);
+
+  // Out of range.
+  CPPUNIT_ASSERT(!locateV2Piece(attrs, fileEntries,
+                                static_cast<size_t>(ctx->getNumPieces()),
+                                pieceLength, fileIndex, localPieceIndex,
+                                localPieceLength));
+}
+
+void BittorrentHelperTest::testV2VerifyPieceByGlobalIndex()
+{
+  // Two files, hand-built (not parsed from a .torrent): file A has two
+  // full 16 KiB pieces (needs a piece layer), file B is a single 5-byte
+  // piece (no layer, verified directly against its pieces root) starting
+  // right after A, which is already piece-aligned.
+  const int64_t pieceLength = 16384;
+  const std::string a0(pieceLength, 'a');
+  const std::string a1(pieceLength, 'b');
+  const std::string b0 = "hello";
+
+  const auto rootA = computeV2MerkleRoot(a0 + a1, 2);
+  const auto layerA =
+      computeV2MerkleRoot(a0, 1) + computeV2MerkleRoot(a1, 1);
+  const auto rootB = computeV2MerkleRoot(b0, 1);
+
+  auto torrent = std::make_shared<TorrentAttribute>();
+  TorrentAttribute::V2FileEntry fileA;
+  fileA.path = {"a.bin"};
+  fileA.length = static_cast<int64_t>(a0.size() + a1.size());
+  fileA.piecesRoot = rootA;
+  TorrentAttribute::V2FileEntry fileB;
+  fileB.path = {"b.bin"};
+  fileB.length = static_cast<int64_t>(b0.size());
+  fileB.piecesRoot = rootB;
+  torrent->v2FileEntries = {fileA, fileB};
+  torrent->pieceLayers.emplace(rootA, layerA);
+
+  std::vector<std::shared_ptr<FileEntry>> fileEntries;
+  fileEntries.push_back(
+      std::make_shared<FileEntry>("a.bin", fileA.length, 0));
+  fileEntries.push_back(std::make_shared<FileEntry>(
+      "b.bin", fileB.length, fileA.length));
+
+  CPPUNIT_ASSERT(verifyV2PieceByGlobalIndex(torrent.get(), fileEntries, 0,
+                                            pieceLength, a0));
+  CPPUNIT_ASSERT(verifyV2PieceByGlobalIndex(torrent.get(), fileEntries, 1,
+                                            pieceLength, a1));
+  CPPUNIT_ASSERT(verifyV2PieceByGlobalIndex(torrent.get(), fileEntries, 2,
+                                            pieceLength, b0));
+  // Wrong bytes, wrong length and an out-of-range piece must all fail.
+  CPPUNIT_ASSERT(!verifyV2PieceByGlobalIndex(torrent.get(), fileEntries, 0,
+                                             pieceLength, a1));
+  CPPUNIT_ASSERT(!verifyV2PieceByGlobalIndex(torrent.get(), fileEntries, 2,
+                                             pieceLength, "world"));
+  CPPUNIT_ASSERT(!verifyV2PieceByGlobalIndex(torrent.get(), fileEntries, 3,
+                                             pieceLength, b0));
 }
 
 void BittorrentHelperTest::testGetInfoHash()

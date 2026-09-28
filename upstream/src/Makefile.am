@@ -439,6 +439,7 @@ SRCS += \
 	BencodeDiskWriterFactory.h\
 	BencodeParser.cc BencodeParser.h\
 	bittorrent_helper.cc bittorrent_helper.h\
+	IteratableV2ChunkChecksumValidator.cc IteratableV2ChunkChecksumValidator.h\
 	BtAbortOutstandingRequestEvent.cc BtAbortOutstandingRequestEvent.h\
 	BtAllowedFastMessage.cc BtAllowedFastMessage.h\
 	BtAnnounce.cc BtAnnounce.h\

@@ -216,18 +216,42 @@ integrar no motor de download.
   teste da spec/libtorrent, pra garantir interoperabilidade correta desde
   o início — não inventar formato próprio).
 
-### Fase 3 — Integração com armazenamento e verificação ao vivo
-Objetivo: um torrent v2/híbrido pode ser adicionado, as peças recebidas
-pela rede (Fase 4) são verificadas com SHA-256/merkle em vez de SHA-1, e
-`DownloadContext`/`PieceStorage` sabem lidar com os dois modos no mesmo
-processo (importante pro híbrido, que fala com peers v1 e v2
-simultaneamente).
+### Fase 3 — Integração com armazenamento e verificação (concluída, checagem offline)
+Objetivo cumprido: a checagem de integridade antes de retomar um download
+("check before resume", o mesmo mecanismo que valida um `.torrent` v1 já
+parcialmente baixado) agora sabe verificar torrents v2-only via árvore de
+merkle, lendo os bytes reais de cada peça do disco. Torrents híbridos
+continuam pelo caminho v1 (SHA-1) de propósito, já que carregam a lista de
+hash v1 completa; live download v2-only continua bloqueado (ver
+`download_helper.cc`, guarda já existente desde a Fase 1) até a Fase 4
+implementar o protocolo com peers.
 
-- [ ] `Piece.cc` / `PieceStorage` / `PieceHashCheckIntegrityEntry`: tornar
-  o algoritmo de verificação de peça plugável por torrent (v1=SHA-1 sobre
-  peça inteira, v2=merkle SHA-256), sem quebrar o caminho v1 existente.
-- [ ] Mapear `v2FileEntries` para os `FileEntry` já usados pelo resto do
-  motor (reaproveitar ao máximo a infraestrutura de arquivos existente).
+- [x] `bittorrent::locateV2Piece()` / `bittorrent::verifyV2PieceByGlobalIndex()`
+  (`bittorrent_helper.h/.cc`): dado um índice de peça global, localiza a
+  qual `V2FileEntry` ela pertence (usando os offsets já corretos e
+  alinhados por peça que `extractV2FileEntries` calcula), o índice local
+  dentro do arquivo e o `piecesRoot`/`piece layer` certos, e verifica os
+  bytes contra a Fase 2 (`verifyV2Piece`). Testado com o fixture real de 3
+  arquivos (`v2_multiple_files.torrent`) e com um caso sintético de 2
+  arquivos cruzando fronteira de peça (`testV2LocatePiece`,
+  `testV2VerifyPieceByGlobalIndex`).
+- [x] `IteratableV2ChunkChecksumValidator` (novo, espelha
+  `IteratableChunkChecksumValidator` do v1): lê cada peça do disco via
+  `DiskAdaptor` e verifica com `verifyV2PieceByGlobalIndex`, atualizando o
+  bitfield da `PieceStorage`. Testado ponta a ponta escrevendo um arquivo
+  real em disco (`IteratableV2ChunkChecksumValidatorTest`, casos válido e
+  corrompido).
+- [x] `PieceHashCheckIntegrityEntry`: escolhe automaticamente entre o
+  validador v1 e o v2 (`isV2OnlyBt()`) sem alterar o comportamento
+  existente para v1/híbrido.
+- [x] `make check`: 989/989 (985 da Fase 1+2, +4 novos desta fase).
+
+Ainda não feito (fica para quando a Fase 4 existir): verificação de peça
+**ao vivo**, durante uma sessão de download/upload real com peers
+(`Piece.cc`, o caminho de hash incremental usado enquanto blocos chegam
+pela rede). Não foi necessário mexer nesse caminho porque o download
+v2-only real continua bloqueado; quando a Fase 4 destravar isso, o mesmo
+`verifyV2PieceByGlobalIndex` pode ser reaproveitado ali.
 
 ### Fase 4 — Protocolo peer-wire (BEP 52)
 Objetivo: aria2-ultra fala v2 de verdade com outros peers.
@@ -268,9 +292,20 @@ Objetivo: aria2-ultra fala v2 de verdade com outros peers.
   validadas com vetores SHA-256 e torrents v2-only/multifile reais do
   libtorrent. A camada multifile revelou que o padding na altura de peça
   precisa ser a raiz da subárvore zerada correspondente.
-- Fases 3-6: não iniciadas.
+- Fase 3: concluída (checagem de integridade offline/antes-de-retomar via
+  árvore de merkle, mapeamento de peça global para arquivo v2, validador
+  novo testado com arquivo real em disco, `make check` 989/989). Feita
+  pelo Claude depois que a sessão do ChatGPT travou no meio da Fase 3;
+  build/testes validados de forma independente em Linux (autotools) antes
+  de comitar. Download v2-only real ainda bloqueado (guarda da Fase 1) —
+  falta o protocolo com peers (Fase 4) pra ter dado ao vivo pra verificar.
+- Fases 4-6: não iniciadas.
 
 ## Próximo passo concreto
 
-Implementar a Fase 3: integrar a verificação de peça v2 ao armazenamento,
-mapear lacunas de alinhamento e preservar o fluxo v1 de torrents híbridos.
+Implementar a Fase 4: protocolo peer-wire do BEP 52 (handshake v2-only,
+mensagens `hash request`/`hashes`/`hash reject`, troca de metadados v2 via
+`ut_metadata`). É a fase que efetivamente destrava o download real de
+torrents v2-only — até lá, o guard em `download_helper.cc` deve continuar
+recusando essas transferências. `verifyV2PieceByGlobalIndex()` (Fase 3) já
+está pronto para ser reaproveitado ali quando peças chegarem pela rede.
