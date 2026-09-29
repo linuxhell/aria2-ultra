@@ -186,19 +186,31 @@ jobs:
         shell: msys2 {0}
         working-directory: upstream
         run: |
-          # aria2c.exe is dynamically linked against libaria2 and the
-          # MSYS2/mingw64 toolchain + third-party libs (gmp, libxml2,
-          # sqlite3, c-ares, libssh2, zlib, libssl/libcrypto via wintls,
-          # gcc/stdc++/winpthread runtime, ...). Uploading the .exe alone
-          # produces a small (tens of KB) file that cannot run standalone
-          # outside this CI environment: Windows just fails to launch it
-          # (missing DLL) with no visible error in some launch contexts.
-          # Collect every dependency ldd resolves under /mingw64 (i.e.
-          # everything that isn't a base Windows system DLL) next to the
-          # exe so the uploaded artifact is self-contained.
+          # aria2c.exe is dynamically linked against libaria2 (built right
+          # here, in src/.libs/ - NOT under /mingw64) and the MSYS2/mingw64
+          # toolchain + third-party libs (gmp, libxml2, sqlite3, c-ares,
+          # libssh2, zlib, libssl/libcrypto via wintls, gcc/stdc++/
+          # winpthread runtime, ...). An earlier version of this step only
+          # bundled /mingw64-prefixed DLLs, which silently missed libaria2
+          # itself: the resulting artifact still couldn't launch outside
+          # this job (the smoke test below is exactly what caught it - a
+          # non-msys2 posix_spawn failure on the missing DLL surfaces here
+          # as exit code 127). Bundle every dependency ldd resolves except
+          # genuine base-Windows DLLs (under C:\Windows), regardless of
+          # which directory it was built or installed in, and fail loudly
+          # if ldd couldn't resolve one at all rather than shipping a
+          # silently-broken artifact.
           mkdir -p dist
           cp src/aria2c.exe dist/
-          deps=$(ldd src/aria2c.exe | awk '{print $3}' | grep -i '^/mingw64/' | sort -u || true)
+          raw="$(ldd src/aria2c.exe)"
+          echo "$raw"
+          missing=$(echo "$raw" | grep -i 'not found' || true)
+          if [ -n "$missing" ]; then
+            echo "ERROR: unresolved DLL dependencies:"
+            echo "$missing"
+            exit 1
+          fi
+          deps=$(echo "$raw" | awk '{print $3}' | grep -v '^$' | grep -viE '^/c/windows/' | sort -u || true)
           if [ -n "$deps" ]; then
             echo "$deps" | xargs -I{} cp -u {} dist/
           fi
