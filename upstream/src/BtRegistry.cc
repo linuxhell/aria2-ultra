@@ -32,7 +32,7 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "BtRegistry.h"
+#include "BtRegistry.h"\n\n#include <cstring>
 #include "DlAbortEx.h"
 #include "DownloadContext.h"
 #include "PeerStorage.h"
@@ -65,8 +65,10 @@ const std::shared_ptr<DownloadContext>&
 BtRegistry::getDownloadContext(const std::string& infoHash) const
 {
   for (auto& kv : pool_) {
-    if (bittorrent::getTorrentAttrs(kv.second->downloadContext)->infoHash ==
-        infoHash) {
+    const auto* wireInfoHash =
+        bittorrent::getWireInfoHash(kv.second->downloadContext);
+    if (wireInfoHash && infoHash.size() == INFO_HASH_LENGTH &&
+        memcmp(wireInfoHash, infoHash.data(), INFO_HASH_LENGTH) == 0) {
       return kv.second->downloadContext;
     }
   }
