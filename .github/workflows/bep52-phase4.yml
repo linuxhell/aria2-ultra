@@ -30,26 +30,37 @@ jobs:
       - name: Bootstrap
         run: autoreconf -i
       - name: Configure
-        run: ./configure
+        run: |
+          # Fully static build: no loose .so next to aria2c, everything
+          # (libaria2 itself, OpenSSL, libxml2, sqlite3, c-ares, libssh2,
+          # gcrypt, gmp, ...) linked directly into the binary. Same
+          # rationale as the Windows job. This also affects the `make
+          # check` test binary built below, which needs cppunit available
+          # as a static .a too (libcppunit-dev ships one on Ubuntu).
+          PKG_CONFIG="pkg-config --static" LDFLAGS="-static" \
+            ./configure --disable-shared --enable-static
       - name: Build and test
         run: make -j2 check
-      - name: Bundle runtime shared libraries
+      - name: Verify fully static (no loose .so files)
         run: |
-          # Same rationale as the Windows job's DLL bundling: aria2c is
-          # dynamically linked against libaria2 plus third-party libs
-          # (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gcrypt, gmp, ...)
-          # that a target machine's distro may not have installed, or may
-          # have at an incompatible version. Bundle every non-base-system
-          # shared library ldd resolves next to the binary; the base
-          # system ones (libc/libm/libpthread/ld-linux/linux-vdso/libdl/
-          # librt) are assumed present on any glibc x86_64 Linux.
+          # The whole point of the static build above is a single
+          # standalone binary with nothing next to it. Verify that here
+          # instead of silently bundling shared libs to paper over a link
+          # that went dynamic: if ldd reports this as a dynamic
+          # executable with any non-base-system dependency, fail the
+          # build loudly rather than shipping a broken/partial artifact.
           mkdir -p dist
           cp src/aria2c dist/
-          deps=$(ldd src/aria2c | awk '{print $3}' | grep -v '^$' | \
-            grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux-x86-64)\.so' | \
-            sort -u || true)
-          if [ -n "$deps" ]; then
-            echo "$deps" | xargs -I{} cp -uL {} dist/
+          raw="$(ldd dist/aria2c 2>&1 || true)"
+          echo "$raw"
+          if ! echo "$raw" | grep -qi "not a dynamic executable"; then
+            extra=$(echo "$raw" | awk '{print $3}' | grep -v '^$' | \
+              grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux-x86-64)\.so' | sort -u || true)
+            if [ -n "$extra" ]; then
+              echo "ERROR: aria2c is not fully static - found external shared library dependencies:"
+              echo "$extra"
+              exit 1
+            fi
           fi
           chmod +x dist/aria2c
           ls -la dist/
@@ -74,53 +85,53 @@ jobs:
           brew install autoconf automake libtool pkg-config gettext \
             openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt
           echo "$(brew --prefix gettext)/bin" >> "$GITHUB_PATH"
+      - name: Force static linking of Homebrew libs
+        run: |
+          # macOS/ld64 has no real -static mode (Apple only supports
+          # dynamic linking against the system's own libSystem/frameworks
+          # - that part is unavoidable and expected on this platform, see
+          # the "Verify" step below). For our own third-party deps
+          # (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gmp, gcrypt) we
+          # still want the .a archives Homebrew ships alongside each
+          # .dylib, but a plain -lfoo always prefers the .dylib when both
+          # exist. Hide the .dylib symlinks so configure/make have no
+          # choice but to link the static archive instead.
+          for formula in openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt; do
+            prefix="$(brew --prefix "$formula")"
+            find "$prefix/lib" -maxdepth 1 -name '*.dylib' -exec mv {} {}.disabled \;
+          done
       - name: Bootstrap
         run: autoreconf -i
       - name: Configure
         run: |
           PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix libssh2)/lib/pkgconfig" \
+          PKG_CONFIG="pkg-config --static" \
             ./configure --disable-websocket
       - name: Build
         run: make -j3
-      - name: Verify binary
+      - name: Verify no Homebrew/bundled dependency remains
         run: |
+          # aria2c still dynamically links against Apple's own system
+          # libraries (libSystem, CoreFoundation, ...) - that's normal
+          # and required on macOS, every binary does it, it's not
+          # something an app can or should embed. What must NOT be
+          # present after the static-linking step above is any
+          # Homebrew-path or otherwise bundled dylib: that's the
+          # "no loose file next to the binary" property this platform
+          # can actually deliver on.
           test -s src/aria2c
           file src/aria2c
-      - name: Bundle runtime dylibs
-        run: |
-          # Same rationale as the other two jobs: aria2c here is linked
-          # against Homebrew-installed dylibs (OpenSSL, libxml2, sqlite3,
-          # c-ares, libssh2, gmp, gcrypt, ...) that a plain macOS install
-          # does not have. Recursively collect every non-/usr/lib,
-          # non-/System dylib otool resolves, copy it next to the binary,
-          # and rewrite load paths (both the binary's and each bundled
-          # dylib's own dependencies) to @executable_path so the result
-          # runs standalone without Homebrew installed.
           mkdir -p dist
-          cp src/aria2c dist/
-          bundle_deps() {
-            local target="$1"
-            otool -L "$target" | tail -n +2 | awk '{print $1}' | while read -r dep; do
-              case "$dep" in
-                /usr/lib/*|/System/*|@*) continue ;;
-              esac
-              local base
-              base="$(basename "$dep")"
-              if [ ! -f "dist/$base" ]; then
-                cp -L "$dep" "dist/$base"
-                chmod +w "dist/$base"
-                bundle_deps "dist/$base"
-              fi
-              install_name_tool -change "$dep" "@executable_path/$base" "$target"
-            done
-          }
-          chmod +w dist/aria2c
-          bundle_deps dist/aria2c
-          install_name_tool -id "@executable_path/aria2c" dist/aria2c || true
+          cp src/aria2c dist/aria2c
           chmod +x dist/aria2c
-          echo "--- final otool -L on binary and bundled dylibs ---"
-          otool -L dist/aria2c
-          for f in dist/*.dylib; do [ -f "$f" ] && otool -L "$f"; done
+          raw="$(otool -L dist/aria2c)"
+          echo "$raw"
+          extra=$(echo "$raw" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/)' || true)
+          if [ -n "$extra" ]; then
+            echo "ERROR: aria2c still depends on non-system dylibs:"
+            echo "$extra"
+            exit 1
+          fi
           ls -la dist/
           echo "--- smoke test: dist/aria2c --version ---"
           (cd dist && ./aria2c --version)
