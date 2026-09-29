@@ -32,14 +32,20 @@ jobs:
         run: autoreconf -i
       - name: Configure
         run: |
-          # Fully static build: no loose .so next to aria2c, everything
-          # (libaria2 itself, OpenSSL, libxml2, sqlite3, c-ares, libssh2,
-          # gcrypt, gmp, ...) linked directly into the binary. Same
-          # rationale as the Windows job. This also affects the `make
-          # check` test binary built below, which needs cppunit available
-          # as a static .a too (libcppunit-dev ships one on Ubuntu).
-          PKG_CONFIG="pkg-config --static" LDFLAGS="-static" \
-            ./configure --disable-shared --enable-static
+          # aria2's own build system has a dedicated static-build switch,
+          # ARIA2_STATIC=yes (see README.rst "To build statically linked
+          # aria2"): it makes pkg-config emit static linking flags AND
+          # adds libtool's -all-static to the link line, which is what
+          # actually forces every third-party dependency (OpenSSL,
+          # libxml2, sqlite3, c-ares, libssh2, gcrypt, gmp, ...) to link
+          # in statically - hand-rolling this via a plain LDFLAGS=-static
+          # + --disable-shared/--enable-static (tried first) silently
+          # produced a fully dynamic binary instead, because LDFLAGS set
+          # at configure time never made it onto the final aria2c link
+          # command in this Makefile. This also affects the `make check`
+          # test binary built below, which needs cppunit available as a
+          # static .a too (libcppunit-dev ships one on Ubuntu).
+          ./configure ARIA2_STATIC=yes
       - name: Build and test
         run: make -j2 check
       - name: Verify fully static (no loose .so files)
@@ -105,9 +111,17 @@ jobs:
         run: autoreconf -i
       - name: Configure
         run: |
+          # ARIA2_STATIC=yes is aria2's own static-build switch (see the
+          # Linux job for why this replaces a hand-rolled
+          # PKG_CONFIG=--static + LDFLAGS approach): it makes pkg-config
+          # emit static flags AND adds libtool's -all-static to the link
+          # line. -all-static is honored per-platform by libtool itself,
+          # so on Darwin it still links our own static .a archives (see
+          # the dylib-hiding step above) while leaving the unavoidable
+          # link against Apple's own libSystem/frameworks dynamic, exactly
+          # as intended.
           PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix libssh2)/lib/pkgconfig" \
-          PKG_CONFIG="pkg-config --static" \
-            ./configure --disable-websocket
+            ./configure ARIA2_STATIC=yes --disable-websocket
       - name: Build
         run: make -j3
       - name: Verify no Homebrew/bundled dependency remains
@@ -186,19 +200,19 @@ jobs:
           # Fully static build: no loose DLLs next to aria2c.exe, everything
           # (libaria2 itself, gmp, libxml2, sqlite3, c-ares, libssh2, zlib,
           # gcc/stdc++/winpthread runtime) linked directly into the .exe.
-          # --disable-shared/--enable-static make libtool build libaria2 as
-          # a static .a instead of a DLL; -static in LDFLAGS (plus the
-          # explicit -static-libgcc/-static-libstdc++/-static compiler
-          # driver flags) tells the linker to prefer the .a archives MSYS2
-          # ships alongside each package's .dll.a import library, instead
-          # of dynamically linking against the shared one; PKG_CONFIG
-          # --static makes pkg-config report each library's transitive
-          # static dependencies too (e.g. libxml2's own dependency on
-          # zlib/iconv), which plain dynamic .pc lookups omit.
-          PKG_CONFIG="pkg-config --static" \
-          LDFLAGS="-static -static-libgcc -static-libstdc++" \
+          # ARIA2_STATIC=yes is aria2's own static-build switch (see the
+          # Linux job for the full story): it makes pkg-config report
+          # static/transitive dependencies (e.g. libxml2's own dependency
+          # on zlib/iconv) AND adds libtool's -all-static to the final
+          # link, which is what actually forces every dependency to link
+          # in statically - a hand-rolled --disable-shared/--enable-static
+          # + LDFLAGS=-static never reached the real link command here
+          # either. -static-libgcc/-static-libstdc++ are kept explicitly
+          # since they're compiler-driver flags outside ARIA2_STATIC's
+          # scope, for the gcc/stdc++ runtime.
+          LDFLAGS="-static-libgcc -static-libstdc++" \
             ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl \
-              --disable-websocket --disable-shared --enable-static
+              --disable-websocket ARIA2_STATIC=yes
       - name: Build
         shell: msys2 {0}
         working-directory: upstream
