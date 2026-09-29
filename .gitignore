@@ -1,0 +1,24 @@
+# Local build output. CI publishes real binaries as GitHub Release assets;
+# nothing built locally should ever be committed here.
+/dist/
+*.exe
+*.log
+
+# autotools/libtool build tree (upstream/ is configured and built in place)
+upstream/Makefile
+upstream/**/Makefile
+upstream/config.h
+upstream/config.log
+upstream/config.status
+upstream/libtool
+upstream/stamp-h1
+upstream/autom4te.cache/
+upstream/aclocal.m4
+upstream/**/.deps/
+upstream/**/.libs/
+upstream/**/*.o
+upstream/**/*.lo
+upstream/**/*.la
+upstream/src/aria2c
+upstream/src/aria2c.exe
+upstream/instroot/

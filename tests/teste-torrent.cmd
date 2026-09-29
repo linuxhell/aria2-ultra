@@ -1,8 +1,10 @@
 @echo off
 setlocal DisableDelayedExpansion
-set "BASE=%~dp0"
+set "BASE=%~dp0..\"
 if not exist "%BASE%aria2c.exe" (
-  echo Falta aria2c.exe na mesma pasta deste arquivo.
+  echo Falta aria2c.exe na raiz do pacote.
+  echo Baixe o binario Windows x64 na pagina de Releases do repositorio
+  echo e coloque como "%BASE%aria2c.exe".
   exit /b 1
 )
 set "LOG=%BASE%aria2-ultra-torrent-v2-%RANDOM%.log"
