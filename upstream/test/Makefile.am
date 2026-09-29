@@ -119,6 +119,7 @@ aria2c_SOURCES += MessageDigestHelperTest.cc\
 
 if ENABLE_BITTORRENT
 aria2c_SOURCES += BtAllowedFastMessageTest.cc\
+	BtHashMessageTest.cc\
 	BtBitfieldMessageTest.cc\
 	BtCancelMessageTest.cc\
 	BtChokeMessageTest.cc\
