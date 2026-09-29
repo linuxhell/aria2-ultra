@@ -132,7 +132,7 @@ void DefaultBtProgressInfoFile::save(IOFile& fp)
 #ifdef ENABLE_BITTORRENT
     // infoHashLength:
     // length: 32 bits
-    const unsigned char* infoHash = bittorrent::getInfoHash(dctx_);
+    const unsigned char* infoHash = bittorrent::getWireInfoHash(dctx_);
     uint32_t infoHashLengthNL = htonl(INFO_HASH_LENGTH);
     WRITE_CHECK(fp, &infoHashLengthNL, sizeof(infoHashLengthNL));
     // infoHash:
