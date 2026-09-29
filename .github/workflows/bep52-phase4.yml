@@ -171,7 +171,22 @@ jobs:
         working-directory: upstream
         run: |
           autoreconf -i
-          ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl --disable-websocket
+          # Fully static build: no loose DLLs next to aria2c.exe, everything
+          # (libaria2 itself, gmp, libxml2, sqlite3, c-ares, libssh2, zlib,
+          # gcc/stdc++/winpthread runtime) linked directly into the .exe.
+          # --disable-shared/--enable-static make libtool build libaria2 as
+          # a static .a instead of a DLL; -static in LDFLAGS (plus the
+          # explicit -static-libgcc/-static-libstdc++/-static compiler
+          # driver flags) tells the linker to prefer the .a archives MSYS2
+          # ships alongside each package's .dll.a import library, instead
+          # of dynamically linking against the shared one; PKG_CONFIG
+          # --static makes pkg-config report each library's transitive
+          # static dependencies too (e.g. libxml2's own dependency on
+          # zlib/iconv), which plain dynamic .pc lookups omit.
+          PKG_CONFIG="pkg-config --static" \
+          LDFLAGS="-static -static-libgcc -static-libstdc++" \
+            ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl \
+              --disable-websocket --disable-shared --enable-static
       - name: Build
         shell: msys2 {0}
         working-directory: upstream
@@ -199,32 +214,25 @@ jobs:
           echo "BIN=$bin" >> "$GITHUB_ENV"
           test -s "$bin"
           file "$bin"
-      - name: Bundle runtime DLLs
+      - name: Verify fully static (no loose DLLs)
         shell: msys2 {0}
         working-directory: upstream
         run: |
-          # The installed aria2c.exe is dynamically linked against
-          # libaria2 plus the MSYS2/mingw64 toolchain + third-party libs
-          # (gmp, libxml2, sqlite3, c-ares, libssh2, zlib, libssl/
-          # libcrypto via wintls, gcc/stdc++/winpthread runtime, ...).
-          # None of those ship with a stock Windows install, so bundle
-          # every dependency ldd resolves except genuine base-Windows
-          # DLLs (under C:\Windows), and fail loudly if ldd couldn't
-          # resolve one at all rather than shipping a silently-broken
-          # artifact.
+          # The whole point of the static build above is a single
+          # standalone .exe with nothing next to it. Verify that here
+          # instead of silently bundling DLLs to paper over a link that
+          # went dynamic: if ldd finds anything beyond base Windows
+          # system DLLs, fail the build loudly so it gets fixed rather
+          # than shipping a broken artifact.
           mkdir -p dist
           cp "$BIN" dist/aria2c.exe
-          raw="$(ldd "$BIN")"
+          raw="$(ldd dist/aria2c.exe || true)"
           echo "$raw"
-          missing=$(echo "$raw" | grep -i 'not found' || true)
-          if [ -n "$missing" ]; then
-            echo "ERROR: unresolved DLL dependencies:"
-            echo "$missing"
+          extra=$(echo "$raw" | awk '{print $3}' | grep -v '^$' | grep -viE '^/c/windows/' | sort -u || true)
+          if [ -n "$extra" ]; then
+            echo "ERROR: aria2c.exe is not fully static - found external DLL dependencies:"
+            echo "$extra"
             exit 1
-          fi
-          deps=$(echo "$raw" | awk '{print $3}' | grep -v '^$' | grep -viE '^/c/windows/' | sort -u || true)
-          if [ -n "$deps" ]; then
-            echo "$deps" | xargs -I{} cp -u {} dist/
           fi
           ls -la dist/
           echo "--- smoke test: dist/aria2c.exe --version ---"
