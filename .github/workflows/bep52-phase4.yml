@@ -33,6 +33,96 @@ jobs:
         run: ./configure
       - name: Build and test
         run: make -j2 check
+      - name: Bundle runtime shared libraries
+        run: |
+          # Same rationale as the Windows job's DLL bundling: aria2c is
+          # dynamically linked against libaria2 plus third-party libs
+          # (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gcrypt, gmp, ...)
+          # that a target machine's distro may not have installed, or may
+          # have at an incompatible version. Bundle every non-base-system
+          # shared library ldd resolves next to the binary; the base
+          # system ones (libc/libm/libpthread/ld-linux/linux-vdso/libdl/
+          # librt) are assumed present on any glibc x86_64 Linux.
+          mkdir -p dist
+          cp src/aria2c dist/
+          ldd src/aria2c | awk '{print $3}' | grep -v '^$' | \
+            grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux-x86-64)\.so' | \
+            sort -u | xargs -r -I{} cp -uL {} dist/
+          chmod +x dist/aria2c
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aria2-ultra-bep52-linux-x64
+          path: upstream/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-x64:
+    runs-on: macos-13
+    defaults:
+      run:
+        working-directory: upstream
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool pkg-config gettext \
+            openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt
+          echo "$(brew --prefix gettext)/bin" >> "$GITHUB_PATH"
+      - name: Bootstrap
+        run: autoreconf -i
+      - name: Configure
+        run: |
+          PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix libssh2)/lib/pkgconfig" \
+            ./configure --disable-websocket
+      - name: Build
+        run: make -j3
+      - name: Verify binary
+        run: |
+          test -s src/aria2c
+          file src/aria2c
+      - name: Bundle runtime dylibs
+        run: |
+          # Same rationale as the other two jobs: aria2c here is linked
+          # against Homebrew-installed dylibs (OpenSSL, libxml2, sqlite3,
+          # c-ares, libssh2, gmp, gcrypt, ...) that a plain macOS install
+          # does not have. Recursively collect every non-/usr/lib,
+          # non-/System dylib otool resolves, copy it next to the binary,
+          # and rewrite load paths (both the binary's and each bundled
+          # dylib's own dependencies) to @executable_path so the result
+          # runs standalone without Homebrew installed.
+          mkdir -p dist
+          cp src/aria2c dist/
+          bundle_deps() {
+            local target="$1"
+            otool -L "$target" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+              case "$dep" in
+                /usr/lib/*|/System/*|@*) continue ;;
+              esac
+              local base
+              base="$(basename "$dep")"
+              if [ ! -f "dist/$base" ]; then
+                cp -L "$dep" "dist/$base"
+                chmod +w "dist/$base"
+                bundle_deps "dist/$base"
+              fi
+              install_name_tool -change "$dep" "@executable_path/$base" "$target"
+            done
+          }
+          chmod +w dist/aria2c
+          bundle_deps dist/aria2c
+          install_name_tool -id "@executable_path/aria2c" dist/aria2c || true
+          chmod +x dist/aria2c
+          echo "--- final otool -L on binary and bundled dylibs ---"
+          otool -L dist/aria2c
+          for f in dist/*.dylib; do [ -f "$f" ] && otool -L "$f"; done
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aria2-ultra-bep52-macos-x64
+          path: upstream/dist
+          if-no-files-found: error
+          retention-days: 14
 
   windows-x64:
     runs-on: windows-2022
