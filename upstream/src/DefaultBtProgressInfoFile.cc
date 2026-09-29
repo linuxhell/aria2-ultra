@@ -132,7 +132,7 @@ void DefaultBtProgressInfoFile::save(IOFile& fp)
 #ifdef ENABLE_BITTORRENT
     // infoHashLength:
     // length: 32 bits
-    const unsigned char* infoHash = bittorrent::getInfoHash(dctx_);
+    const unsigned char* infoHash = bittorrent::getWireInfoHash(dctx_);
     uint32_t infoHashLengthNL = htonl(INFO_HASH_LENGTH);
     WRITE_CHECK(fp, &infoHashLengthNL, sizeof(infoHashLengthNL));
     // infoHash:
@@ -274,7 +274,7 @@ void DefaultBtProgressInfoFile::load()
     READ_CHECK(fp, savedInfoHash.data(), infoHashLength);
 #ifdef ENABLE_BITTORRENT
     if (infoHashCheckEnabled) {
-      const unsigned char* infoHash = bittorrent::getInfoHash(dctx_);
+      const unsigned char* infoHash = bittorrent::getWireInfoHash(dctx_);
       if (memcmp(savedInfoHash.data(), infoHash, INFO_HASH_LENGTH) != 0) {
         throw DL_ABORT_EX(
             fmt("info hash mismatch. expected: %s, actual: %s",
