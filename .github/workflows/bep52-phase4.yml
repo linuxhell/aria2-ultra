@@ -28,6 +28,12 @@ jobs:
             libcppunit-dev libssl-dev libxml2-dev libsqlite3-dev libc-ares-dev \
             libssh2-1-dev zlib1g-dev libgcrypt20-dev libgmp-dev \
             liblzma-dev libidn2-0-dev libpsl-dev libnghttp2-dev libbrotli-dev libunistring-dev libzstd-dev
+          # Ubuntu's libc-ares-dev (CMake-built) ships its static archive
+          # as libcares_static.a instead of the conventional libcares.a,
+          # so a plain -lcares under -all-static can't find it. Symlink
+          # the name the linker actually looks for.
+          libdir="$(dpkg -L libc-ares-dev | grep -m1 '/libcares_static\.a$' | xargs dirname)"
+          sudo ln -sf "$libdir/libcares_static.a" "$libdir/libcares.a"
       - name: Bootstrap
         run: autoreconf -i
       - name: Configure
