@@ -82,7 +82,7 @@ DefaultBtMessageReceiver::receiveHandshake(bool quickReply)
     // Handle tracker's NAT-checking feature
     handshakeSent_ = true;
     // check info_hash
-    if (memcmp(bittorrent::getInfoHash(downloadContext_),
+    if (memcmp(bittorrent::getWireInfoHash(downloadContext_),
                peerConnection_->getBuffer() + 28, INFO_HASH_LENGTH) == 0) {
       sendHandshake();
     }
