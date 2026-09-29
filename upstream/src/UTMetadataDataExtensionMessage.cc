@@ -89,12 +89,26 @@ void UTMetadataDataExtensionMessage::doReceivedAction()
     pieceStorage_->completePiece(pieceStorage_->getPiece(getIndex()));
     if (pieceStorage_->downloadFinished()) {
       std::string metadata = util::toString(pieceStorage_->getDiskAdaptor());
-      unsigned char infoHash[INFO_HASH_LENGTH];
-      message_digest::digest(infoHash, INFO_HASH_LENGTH,
-                             MessageDigest::sha1().get(), metadata.data(),
-                             metadata.size());
-      if (memcmp(infoHash, bittorrent::getInfoHash(dctx_), INFO_HASH_LENGTH) ==
-          0) {
+      const auto* attrs = bittorrent::getTorrentAttrs(dctx_);
+      bool metadataHashOK = false;
+      if (!attrs->infoHash.empty()) {
+        unsigned char infoHash[INFO_HASH_LENGTH];
+        message_digest::digest(infoHash, INFO_HASH_LENGTH,
+                               MessageDigest::sha1().get(), metadata.data(),
+                               metadata.size());
+        metadataHashOK =
+            memcmp(infoHash, attrs->infoHash.data(), INFO_HASH_LENGTH) == 0;
+      }
+      else if (attrs->infoHashV2.size() == 32) {
+        unsigned char infoHashV2[32];
+        auto sha256 = MessageDigest::create("sha-256");
+        message_digest::digest(infoHashV2, sizeof(infoHashV2), sha256.get(),
+                               metadata.data(), metadata.size());
+        metadataHashOK =
+            memcmp(infoHashV2, attrs->infoHashV2.data(), sizeof(infoHashV2)) ==
+            0;
+      }
+      if (metadataHashOK) {
         A2_LOG_INFO("Got ut_metadata");
       }
       else {
