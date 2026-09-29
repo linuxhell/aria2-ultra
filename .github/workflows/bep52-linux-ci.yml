@@ -19,6 +19,11 @@ jobs:
             build-essential autoconf automake autotools-dev autopoint libtool pkg-config \
             libssl-dev libc-ares-dev zlib1g-dev libsqlite3-dev libssh2-1-dev \
             libcppunit-dev gettext
+      - name: Restore upstream autotools macros
+        run: |
+          git clone --quiet https://github.com/aria2/aria2.git /tmp/aria2-reference
+          git -C /tmp/aria2-reference checkout --quiet 9e7273583f83e881e3ec067b523ba88724088d2f
+          cp -a /tmp/aria2-reference/m4 upstream/m4
       - name: Configure
         working-directory: upstream
         run: |
