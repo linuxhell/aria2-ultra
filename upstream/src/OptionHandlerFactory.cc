@@ -447,9 +447,15 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // Default to 16 rather than 1: a single connection per server leaves an
+    // otherwise-fast link at the mercy of one TCP stream's own throughput
+    // variance (confirmed on aria2-ultra's validated direct-download
+    // baseline, see tests/teste-direto-16-trunc-autosave.cmd, which passes
+    // --max-connection-per-server=16 explicitly and measurably outperforms
+    // this option's old vanilla-aria2 default of 1).
     OptionHandler* op(new NumberOptionHandler(PREF_MAX_CONNECTION_PER_SERVER,
                                               TEXT_MAX_CONNECTION_PER_SERVER,
-                                              "1", 1, 16, 'x'));
+                                              "16", 1, 16, 'x'));
     op->addTag(TAG_BASIC);
     op->addTag(TAG_FTP);
     op->addTag(TAG_HTTP);
@@ -509,8 +515,14 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // 1M rather than 20M, matching -s/-x's new default of 16 above: at 20M,
+    // any file under ~320M can never actually reach 16 segments no matter
+    // what -s/--split says, silently capping parallelism for smaller
+    // downloads. Also matches the validated baseline
+    // (tests/teste-direto-16-trunc-autosave.cmd passes --min-split-size=1M
+    // explicitly).
     OptionHandler* op(new UnitNumberOptionHandler(
-        PREF_MIN_SPLIT_SIZE, TEXT_MIN_SPLIT_SIZE, "20M", 1_m, 1_g, 'k'));
+        PREF_MIN_SPLIT_SIZE, TEXT_MIN_SPLIT_SIZE, "1M", 1_m, 1_g, 'k'));
     op->addTag(TAG_BASIC);
     op->addTag(TAG_FTP);
     op->addTag(TAG_HTTP);
@@ -979,8 +991,11 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // Matches -x/--max-connection-per-server's new default of 16 above: with
+    // fewer segments than connections, aria2 can never actually open that
+    // many connections to a single-URI download.
     OptionHandler* op(
-        new NumberOptionHandler(PREF_SPLIT, TEXT_SPLIT, "5", 1, -1, 's'));
+        new NumberOptionHandler(PREF_SPLIT, TEXT_SPLIT, "16", 1, -1, 's'));
     op->addTag(TAG_BASIC);
     op->addTag(TAG_FTP);
     op->addTag(TAG_HTTP);
