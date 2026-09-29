@@ -1,4 +1,5 @@
 name: BEP52 phase 4 CI
+# upstream/m4 restored from aria2/aria2@9e72735 for reproducible autoreconf
 
 on:
   pull_request:
