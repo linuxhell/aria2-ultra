@@ -254,7 +254,7 @@ DefaultBtMessageFactory::createHandshakeMessage(const unsigned char* data,
 {
   auto msg = BtHandshakeMessage::create(data, dataLength);
   msg->setBtMessageValidator(make_unique<BtHandshakeMessageValidator>(
-      msg.get(), bittorrent::getInfoHash(downloadContext_)));
+      msg.get(), bittorrent::getWireInfoHash(downloadContext_)));
   setCommonProperty(msg.get());
   return msg;
 }
