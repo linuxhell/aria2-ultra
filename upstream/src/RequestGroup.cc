@@ -1312,6 +1312,22 @@ void RequestGroup::setDownloadContext(
   downloadContext_ = downloadContext;
   if (downloadContext_) {
     downloadContext_->setOwnerRequestGroup(this);
+#ifdef ENABLE_BITTORRENT
+    // aria2-ultra's validated baselines use different defaults per
+    // download kind: 'trunc' for direct downloads (see
+    // tests/teste-direto-16-trunc-autosave.cmd), 'none' for BitTorrent
+    // (see tests/teste-torrent*.cmd) - BT writes pieces out of order
+    // across many files, where upfront allocation buys nothing but delay.
+    // -a/--file-allocation's compiled-in default is 'trunc'; only
+    // downgrade it to 'none' here when it is still exactly that default,
+    // so an explicit --file-allocation=prealloc/falloc/trunc/none from
+    // the user is always honored as given.
+    if (downloadContext_->hasAttribute(CTX_ATTR_BT) &&
+        option_->get(PREF_FILE_ALLOCATION) == V_TRUNC) {
+      option_->put(PREF_FILE_ALLOCATION, V_NONE);
+      fileAllocationEnabled_ = false;
+    }
+#endif // ENABLE_BITTORRENT
   }
 }
 

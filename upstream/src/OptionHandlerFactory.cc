@@ -317,8 +317,19 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // Default to 'trunc' rather than 'prealloc': prealloc/falloc write or
+    // zero-fill the whole file upfront, which can add tens of seconds of
+    // dead time before the first byte of a large (multi-GiB) download is
+    // ever written - worst on Windows. 'trunc' (ftruncate(), or the
+    // platform equivalent) sets the file to its final size essentially
+    // instantly on modern filesystems (NTFS, ext4, btrfs, xfs) without
+    // that upfront cost, while still reserving the space. This matches
+    // the validated aria2-ultra direct-download baseline (see
+    // tests/teste-direto-16-trunc-autosave.cmd). Users who still want
+    // gap-free zero-filled pre-allocation (e.g. to avoid fragmentation on
+    // a nearly-full disk) can pass -a/--file-allocation explicitly.
     OptionHandler* op(new ParameterOptionHandler(
-        PREF_FILE_ALLOCATION, TEXT_FILE_ALLOCATION, V_PREALLOC,
+        PREF_FILE_ALLOCATION, TEXT_FILE_ALLOCATION, V_TRUNC,
         {V_NONE, V_PREALLOC, V_TRUNC,
 #ifdef HAVE_SOME_FALLOCATE
          V_FALLOC
