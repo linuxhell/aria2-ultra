@@ -33,6 +33,17 @@ jobs:
   windows-x64:
     runs-on: windows-2022
     steps:
+      # windows-2022 runners default to core.autocrlf=true, which rewrites
+      # LF to CRLF on checkout. configure.ac (and other autotools sources)
+      # use backslash line continuations that break under CRLF: an M4
+      # macro argument list split across lines ends up with stray leading
+      # whitespace on every continuation line once checked out as CRLF,
+      # which is why AC_CHECK_HEADERS([windows.h \\\n  winsock2.h \\\n ...])
+      # silently reports "no" for winsock2.h/ws2tcpip.h/etc even though
+      # they exist - the macro-expanded header name has extra whitespace
+      # in it. This must run before checkout so it applies to this clone.
+      - name: Disable CRLF conversion for autotools sources
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
         with:
