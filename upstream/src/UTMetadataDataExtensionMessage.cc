@@ -89,12 +89,7 @@ void UTMetadataDataExtensionMessage::doReceivedAction()
     pieceStorage_->completePiece(pieceStorage_->getPiece(getIndex()));
     if (pieceStorage_->downloadFinished()) {
       std::string metadata = util::toString(pieceStorage_->getDiskAdaptor());
-      unsigned char infoHash[INFO_HASH_LENGTH];
-      message_digest::digest(infoHash, INFO_HASH_LENGTH,
-                             MessageDigest::sha1().get(), metadata.data(),
-                             metadata.size());
-      if (memcmp(infoHash, bittorrent::getInfoHash(dctx_), INFO_HASH_LENGTH) ==
-          0) {
+      if (bittorrent::validateMetadataInfoHash(dctx_, metadata)) {
         A2_LOG_INFO("Got ut_metadata");
       }
       else {
