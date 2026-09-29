@@ -1,0 +1,63 @@
+name: Publish validated aria2-ultra binaries
+on:
+  push:
+    branches: [chatgpt/bep52-phase4]
+    paths: [.github/workflows/publish-aria2-ultra.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    if: github.event.head_commit.message == 'Publish validated aria2-ultra binaries'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aria2-ultra-bep52-linux-x64
+          path: artifacts/linux
+          repository: linuxhell/aria2-ultra
+          run-id: 36612789452
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: aria2-ultra-bep52-windows-x64
+          path: artifacts/windows
+          repository: linuxhell/aria2-ultra
+          run-id: 36612789452
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: aria2-ultra-bep52-macos-x64
+          path: artifacts/macos
+          repository: linuxhell/aria2-ultra
+          run-id: 36612789452
+          github-token: ${{ github.token }}
+      - name: Verify and name release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          cp artifacts/linux/aria2c release-assets/aria2c-linux-x64
+          cp artifacts/windows/aria2c.exe release-assets/aria2c-windows-x64.exe
+          cp artifacts/macos/aria2c release-assets/aria2c-macos-x64
+          echo '87769ff5628fb7a5369f5ce3d85496123819bb40948b47277304ddc3a3afc10e  release-assets/aria2c-linux-x64' | sha256sum -c -
+          echo 'd8dc8dbbf5984b2d36fd23129028e38b3bde81e695cc7bd5bf68a16a683621d9  release-assets/aria2c-windows-x64.exe' | sha256sum -c -
+          echo '3acb1dd18d59962d1340769d5c1156eb14c2f8e8982f4409b80e4619e0bbc60d  release-assets/aria2c-macos-x64' | sha256sum -c -
+          for file in release-assets/aria2c-*; do
+            (cd release-assets && sha256sum "${file##*/}" > "${file##*/}.sha256")
+          done
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v1.37.0-ultra.1 --repo linuxhell/aria2-ultra >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite'
+            exit 1
+          fi
+          gh release create v1.37.0-ultra.1 release-assets/* \
+            --repo linuxhell/aria2-ultra \
+            --target 59d5fec3fcc65e54c18d7f139990dc5ea7c57f26 \
+            --title 'aria2-ultra 1.37.0 BEP52' \
+            --notes 'BitTorrent v2/hybrid BEP52 support and optimized direct-download defaults. Standalone Windows x64, Linux x64, and macOS x64 binaries, validated by CI run 36612789452.'
