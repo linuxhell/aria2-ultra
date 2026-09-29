@@ -1,0 +1,36 @@
+name: BEP52 Windows x64
+
+on:
+  push:
+    branches:
+      - chatgpt/bep52-phase4-windows-x64
+  workflow_dispatch:
+
+concurrency:
+  group: bep52-windows-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build static Windows x64 executable
+        run: docker build -f upstream/Dockerfile.mingw.local -t aria2-ultra-bep52-x64 .
+      - name: Extract executable
+        run: |
+          id=$(docker create aria2-ultra-bep52-x64)
+          docker cp "$id:/aria2/src/aria2c.exe" aria2c-bep52-windows-x64.exe
+          docker rm "$id"
+          sha256sum aria2c-bep52-windows-x64.exe > SHA256SUMS-bep52-windows-x64.txt
+          file aria2c-bep52-windows-x64.exe
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria2-ultra-bep52-windows-x64
+          path: |
+            aria2c-bep52-windows-x64.exe
+            SHA256SUMS-bep52-windows-x64.txt
+          if-no-files-found: error
+          retention-days: 14
