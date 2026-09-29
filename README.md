@@ -30,9 +30,16 @@ Cada asset vem acompanhado de um `.sha256` para verificação de integridade. As
 
 ## Desempenho
 
-Mais rápido que o aria2 clássico com os parâmetros originais dele — não é opinião, é medição real: baixando o mesmo arquivo de 8,17GB, usar 1 única conexão por servidor (o padrão antigo do aria2 clássico, `-x 1`) produz uma queda real de throughput no meio do download (~100MB/s caindo para ~62MB/s entre 80-88%, sujeito à variação de uma única conexão TCP), enquanto o novo padrão do aria2-ultra (16 conexões) manteve uma taxa praticamente constante de ~117,7MB/s do 0% ao 100%, **47% mais rápido no total** (71s vs. 103s). É exatamente por isso que os defaults acima mudaram: o aria2-ultra já nasce configurado do jeito que a medição mostrou ser mais rápido, em vez de exigir que cada usuário descubra e passe essas flags manualmente.
+Medição real, mesmo arquivo (ISO de 8,17GB) em todos os testes:
 
-Também mais rápido que o aria2-next (o fork que troca a stack HTTP por libcurl e a stack de BitTorrent por libtorrent-rasterbar): no mesmo arquivo de 8,17GB, com as duas ferramentas configuradas de forma equivalente (16 conexões, `--file-allocation=trunc` nos dois), o aria2-next levou 88,98s (~91,8MB/s) contra 71s (~115,1MB/s) do aria2-ultra — **cerca de 20% mais rápido**. O aria2-ultra mantém o motor enxuto do aria2 clássico, sem a sobrecarga de trocar duas stacks inteiras por bibliotecas externas mais pesadas, e ainda assim ganha o suporte a BitTorrent v2/híbrido que era a única vantagem real do aria2-next.
+| Engine | Configuração | Tempo total | Velocidade média |
+| --- | --- | --- | --- |
+| aria2 clássico | padrão antigo (`-x 1`, 1 conexão) | 103s | ~79,3 MB/s |
+| aria2-next | `--stream-max-connections=16 --file-allocation=trunc` | 88,98s | ~91,8 MB/s |
+| **aria2-ultra** | `-s16 -x16 --file-allocation=trunc` (padrão atual, nada a configurar) | **71s** | **~115,1 MB/s** |
+
+- **vs. aria2 clássico** (padrão antigo, 1 conexão): a única conexão fica à mercê da própria variação de throughput — houve uma queda real de ~100MB/s para ~62MB/s entre 80-88% do download nesse teste — enquanto o aria2-ultra manteve uma taxa praticamente constante de ~117,7MB/s do 0% ao 100%. **47% mais rápido no total.** É por isso que os defaults deste fork mudaram: ele já nasce configurado do jeito que a medição mostrou ser mais rápido, em vez de exigir que cada usuário descubra e passe essas flags manualmente.
+- **vs. aria2-next** (mesma configuração de conexões e `file-allocation` nos dois lados): **~20% mais rápido.** aria2-next troca a stack HTTP por libcurl e a stack de BitTorrent por libtorrent-rasterbar; o aria2-ultra mantém o motor enxuto do aria2 clássico, sem a sobrecarga de substituir duas stacks inteiras por bibliotecas externas mais pesadas, e ainda assim ganha o suporte a BitTorrent v2/híbrido que era a única vantagem real do aria2-next.
 
 ## Desenvolvimento
 
