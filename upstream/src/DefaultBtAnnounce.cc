@@ -171,7 +171,7 @@ std::string DefaultBtAnnounce::getAnnounceUrl()
           "key=%s&"
           "numwant=%d&"
           "no_peer_id=1",
-          util::percentEncode(bittorrent::getInfoHash(downloadContext_),
+          util::percentEncode(bittorrent::getWireInfoHash(downloadContext_),
                               INFO_HASH_LENGTH)
               .c_str(),
           util::percentEncode(bittorrent::getStaticPeerId(), PEER_ID_LENGTH)
@@ -220,7 +220,11 @@ std::shared_ptr<UDPTrackerRequest> DefaultBtAnnounce::createUDPTrackerRequest(
   req->remoteAddr = remoteAddr;
   req->remotePort = remotePort;
   req->action = UDPT_ACT_ANNOUNCE;
-  req->infohash = bittorrent::getTorrentAttrs(downloadContext_)->infoHash;
+  const auto* wireInfoHash = bittorrent::getWireInfoHash(downloadContext_);
+  if (!wireInfoHash) {
+    throw DL_ABORT_EX("Missing BitTorrent wire info hash.");
+  }
+  req->infohash.assign(wireInfoHash, wireInfoHash + INFO_HASH_LENGTH);
   const unsigned char* peerId = bittorrent::getStaticPeerId();
   req->peerId.assign(peerId, peerId + PEER_ID_LENGTH);
   req->downloaded = stat.getSessionDownloadLength();
