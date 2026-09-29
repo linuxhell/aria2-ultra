@@ -456,6 +456,9 @@ SRCS += \
 	BtFileAllocationEntry.cc BtFileAllocationEntry.h\
 	BtHandshakeMessage.cc BtHandshakeMessage.h\
 	BtHandshakeMessageValidator.cc BtHandshakeMessageValidator.h\
+	BtHashRequestMessage.cc BtHashRequestMessage.h\
+	BtHashesMessage.cc BtHashesMessage.h\
+	BtHashRejectMessage.cc BtHashRejectMessage.h\
 	BtHaveAllMessage.cc BtHaveAllMessage.h\
 	BtHaveMessage.cc BtHaveMessage.h\
 	BtHaveNoneMessage.cc BtHaveNoneMessage.h\
