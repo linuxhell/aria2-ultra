@@ -37,6 +37,7 @@
 #include <cassert>
 #include <cstring>
 #include <algorithm>
+#include <cstdint>
 
 #include "DownloadContext.h"
 #include "Randomizer.h"
