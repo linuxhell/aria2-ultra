@@ -940,6 +940,32 @@ std::string getInfoHashString(DownloadContext* dctx)
   return util::toHex(getTorrentAttrs(dctx)->infoHash);
 }
 
+const unsigned char*
+getWireInfoHash(const std::shared_ptr<DownloadContext>& dctx)
+{
+  return getWireInfoHash(dctx.get());
+}
+
+const unsigned char* getWireInfoHash(DownloadContext* dctx)
+{
+  const auto attrs = getTorrentAttrs(dctx);
+  const auto& hash = attrs->infoHash.empty() ? attrs->infoHashV2 : attrs->infoHash;
+  if (hash.size() < INFO_HASH_LENGTH) {
+    throw DL_ABORT_EX("BitTorrent info hash is too short for peer wire protocol.");
+  }
+  return reinterpret_cast<const unsigned char*>(hash.data());
+}
+
+std::string getWireInfoHashString(const std::shared_ptr<DownloadContext>& dctx)
+{
+  return getWireInfoHashString(dctx.get());
+}
+
+std::string getWireInfoHashString(DownloadContext* dctx)
+{
+  return util::toHex(getWireInfoHash(dctx), INFO_HASH_LENGTH);
+}
+
 std::vector<size_t> computeFastSet(const std::string& ipaddr, size_t numPieces,
                                    const unsigned char* infoHash,
                                    size_t fastSetSize)
