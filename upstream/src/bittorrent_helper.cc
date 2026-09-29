@@ -940,6 +940,83 @@ std::string getInfoHashString(DownloadContext* dctx)
   return util::toHex(getTorrentAttrs(dctx)->infoHash);
 }
 
+const unsigned char* getWireInfoHash(DownloadContext* dctx)
+{
+  auto* attrs = getTorrentAttrs(dctx);
+  if (!attrs->infoHash.empty()) {
+    return reinterpret_cast<const unsigned char*>(attrs->infoHash.data());
+  }
+  if (attrs->infoHashV2.size() >= INFO_HASH_LENGTH) {
+    return reinterpret_cast<const unsigned char*>(attrs->infoHashV2.data());
+  }
+  return nullptr;
+}
+
+const unsigned char*
+getWireInfoHash(const std::shared_ptr<DownloadContext>& dctx)
+{
+  return getWireInfoHash(dctx.get());
+}
+
+std::string getWireInfoHashString(DownloadContext* dctx)
+{
+  const auto* hash = getWireInfoHash(dctx);
+  return hash ? util::toHex(hash, INFO_HASH_LENGTH) : A2STR::NIL;
+}
+
+std::string
+getWireInfoHashString(const std::shared_ptr<DownloadContext>& dctx)
+{
+  return getWireInfoHashString(dctx.get());
+}
+
+bool isV2OnlyBt(DownloadContext* dctx)
+{
+  if (!dctx || !dctx->hasAttribute(CTX_ATTR_BT)) {
+    return false;
+  }
+  const auto* attrs = getTorrentAttrs(dctx);
+  return attrs->metaVersion == 2 && attrs->infoHash.empty() &&
+         attrs->infoHashV2.size() == 32;
+}
+
+bool isV2OnlyBt(const std::shared_ptr<DownloadContext>& dctx)
+{
+  return isV2OnlyBt(dctx.get());
+}
+
+bool validateMetadataInfoHash(DownloadContext* dctx,
+                              const std::string& metadata)
+{
+  if (!dctx || !dctx->hasAttribute(CTX_ATTR_BT)) {
+    return false;
+  }
+  const auto* attrs = getTorrentAttrs(dctx);
+  bool checked = false;
+  if (!attrs->infoHash.empty()) {
+    unsigned char hash[INFO_HASH_LENGTH];
+    message_digest::digest(hash, sizeof(hash), MessageDigest::sha1().get(),
+                           metadata.data(), metadata.size());
+    if (attrs->infoHash.size() != sizeof(hash) ||
+        memcmp(hash, attrs->infoHash.data(), sizeof(hash)) != 0) {
+      return false;
+    }
+    checked = true;
+  }
+  if (!attrs->infoHashV2.empty()) {
+    unsigned char hash[32];
+    auto sha256 = MessageDigest::create("sha-256");
+    message_digest::digest(hash, sizeof(hash), sha256.get(), metadata.data(),
+                           metadata.size());
+    if (attrs->infoHashV2.size() != sizeof(hash) ||
+        memcmp(hash, attrs->infoHashV2.data(), sizeof(hash)) != 0) {
+      return false;
+    }
+    checked = true;
+  }
+  return checked;
+}
+
 std::vector<size_t> computeFastSet(const std::string& ipaddr, size_t numPieces,
                                    const unsigned char* infoHash,
                                    size_t fastSetSize)
