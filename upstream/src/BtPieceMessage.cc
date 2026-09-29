@@ -241,6 +241,52 @@ std::string BtPieceMessage::toString() const
 
 bool BtPieceMessage::checkPieceHash(const std::shared_ptr<Piece>& piece)
 {
+  if (bittorrent::isV2OnlyBt(downloadContext_)) {
+    // BEP 52 validates a logical piece against the per-file Merkle tree.
+    // Flush any write-cache bytes first so the existing, tested helper can
+    // read the exact piece bytes from DiskAdaptor.
+    if (piece->getWrDiskCacheEntry()) {
+      piece->flushWrCache(getPieceStorage()->getWrDiskCache());
+      if (piece->getWrDiskCacheEntry()->getError() !=
+          WrDiskCacheEntry::CACHE_ERR_SUCCESS) {
+        throw DOWNLOAD_FAILURE_EXCEPTION2(
+            fmt("Write disk cache flush failure index=%lu",
+                static_cast<unsigned long>(piece->getIndex())),
+            piece->getWrDiskCacheEntry()->getErrorCode());
+      }
+    }
+
+    size_t fileIndex;
+    size_t localPieceIndex;
+    int64_t localPieceLength;
+    if (!bittorrent::locateV2Piece(
+            bittorrent::getTorrentAttrs(downloadContext_),
+            downloadContext_->getFileEntries(), piece->getIndex(),
+            downloadContext_->getPieceLength(), fileIndex, localPieceIndex,
+            localPieceLength)) {
+      return false;
+    }
+
+    const int64_t offset =
+        static_cast<int64_t>(piece->getIndex()) *
+        downloadContext_->getPieceLength();
+    std::string data(static_cast<size_t>(localPieceLength), '\0');
+    size_t pos = 0;
+    while (pos < data.size()) {
+      ssize_t nread = getPieceStorage()->getDiskAdaptor()->readData(
+          reinterpret_cast<unsigned char*>(&data[pos]), data.size() - pos,
+          offset + pos);
+      if (nread <= 0) {
+        return false;
+      }
+      pos += static_cast<size_t>(nread);
+    }
+    return bittorrent::verifyV2PieceByGlobalIndex(
+        bittorrent::getTorrentAttrs(downloadContext_),
+        downloadContext_->getFileEntries(), piece->getIndex(),
+        downloadContext_->getPieceLength(), data);
+  }
+
   if (!getPieceStorage()->isEndGame() && piece->isHashCalculated()) {
     A2_LOG_DEBUG(fmt("Hash is available!! index=%lu",
                      static_cast<unsigned long>(piece->getIndex())));
