@@ -169,6 +169,17 @@ std::string getInfoHashString(DownloadContext* downloadContext);
 std::string
 getInfoHashString(const std::shared_ptr<DownloadContext>& downloadContext);
 
+// Returns the 20-byte torrent identifier used on the classic peer wire,
+// trackers, DHT, LPD and MSE. For BEP 3/hybrid torrents this is infoHash;
+// for BEP 52 v2-only torrents this is the first 20 bytes of infoHashV2.
+const unsigned char* getWireInfoHash(DownloadContext* downloadContext);
+const unsigned char*
+getWireInfoHash(const std::shared_ptr<DownloadContext>& downloadContext);
+
+std::string getWireInfoHashString(DownloadContext* downloadContext);
+std::string
+getWireInfoHashString(const std::shared_ptr<DownloadContext>& downloadContext);
+
 // Returns 8bytes unsigned integer located at offset pos.  The integer
 // in msg is network byte order. This function converts it into host
 // byte order and returns it.
