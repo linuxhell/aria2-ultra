@@ -1,22 +1,36 @@
 # Plano de implementação: BitTorrent v2 (BEP 52) do zero no aria2 clássico
 
-> **Este é um arquivo de retomada para o ChatGPT continuar o trabalho.**
-> Foi escrito pelo Claude (Anthropic) sem acesso a nenhuma conversa
-> anterior sua com o usuário — é autocontido de propósito. O usuário quer
-> que a implementação de código da Fase 1 em diante seja feita por você a
-> partir daqui. Não é preciso pedir mais contexto ao usuário antes de
-> começar: tudo que foi levantado está neste documento e em
-> `HANDOFF-CHATGPT.md` (histórico da sessão anterior, sobre uma tentativa
-> diferente — usar o aria2-next — que foi abandonada; leia a seção logo
-> abaixo pra entender por quê, mas o trabalho a partir daqui é neste
-> arquivo, na base do aria2 clássico).
+> **Este é um arquivo de retomada para o ChatGPT continuar o trabalho, num
+> chat novo, sem nenhum histórico de conversa anterior.** Foi escrito pelo
+> Claude (Anthropic) sem acesso a nenhuma conversa sua com o usuário — é
+> autocontido de propósito. Não é preciso pedir mais contexto ao usuário
+> antes de começar: tudo que foi levantado está neste documento e em
+> `HANDOFF-CHATGPT.md` (histórico de uma tentativa anterior, diferente —
+> usar o aria2-next — que foi abandonada; leia a seção logo abaixo pra
+> entender por quê, mas o trabalho a partir daqui é neste arquivo, na base
+> do aria2 clássico).
+>
+> **Estado agora (comece lendo isto, não o resto do documento primeiro):**
+> Fases 0, 1, 2 e 3 estão **concluídas, commitadas e testadas**
+> (989 testes passando). A Fase 4 (protocolo peer-wire) está **mapeada mas
+> sem nenhum código commitado** — é o que você vai implementar a partir
+> daqui. Vá direto para a seção "Fase 4" mais abaixo neste documento.
+>
+> **Para começar**: clone `https://github.com/linuxhell/aria2-ultra`,
+> branch `claude/upbeat-cannon-7ovk29` (o HEAD no momento em que isto foi
+> escrito é o commit `e4c7e73`; se houver commits mais novos na branch,
+> são de você mesmo numa sessão anterior — confira o log e continue de lá,
+> não sobrescreva). O código do aria2 fica em `upstream/` dentro do repo.
 >
 > Ambiente: diferente do aria2-next (que só compila com toolchain nativo
 > do Windows), **este código (aria2 clássico, autotools) compila e roda
 > testes em Linux normalmente** — `autoreconf -i && ./configure && make
 > check`. Se faltar `autopoint`, `apt-get install gettext` resolve (já
 > validado numa sessão anterior). Use isso pra validar cada fase de
-> verdade antes de comitar, não só ler o código.
+> verdade antes de comitar, não só ler o código. **Mas a Fase 4
+> especificamente também precisa de rede BitTorrent real (peers/trackers)
+> para validar interoperabilidade — `make check` sozinho não é suficiente
+> pra essa fase, veja o aviso na seção da Fase 4.**
 
 Documento de retomada. Base: aria2 clássico vendorizado em `upstream/`
 (commit `aria2/aria2@9e7273583f83e881e3ec067b523ba88724088d2f`, versão
@@ -74,10 +88,11 @@ discussões, só seguir:
 6. **Valide cada fase compilando e rodando `make check` no Linux antes de
    comitar** (autotools funciona aqui, diferente do aria2-next). Não
    avance de fase com testes quebrando.
-7. **Ordem das fases importa**: não pule pra protocolo peer-wire (Fase 4)
-   antes de ter parsing + hash v2 (Fase 1) e verificação de integridade
-   merkle (Fase 2) sólidos e testados — o resto depende disso estar
-   correto.
+7. **Ordem das fases importa**: as Fases 1-3 (parsing/hash v2, merkle,
+   integração com armazenamento) já estão prontas e testadas — a próxima
+   é a Fase 4 (protocolo peer-wire), na ordem 4.1 → 4.2 → 4.3 descrita
+   naquela seção. Não pule sub-fases: 4.2 (mensagens novas) depende do
+   hash de 20 bytes certo no fio (4.1) já funcionando.
 8. **Torrent híbrido é o caso mais delicado**: ele precisa responder
    corretamente tanto a peers que só falam v1 quanto a peers que só falam
    v2, ao mesmo tempo, com o mesmo conteúdo de arquivo. Teste sempre os
