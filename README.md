@@ -48,3 +48,7 @@ Melhorias acontecem em branch de desenvolvimento; o merge final na branch princi
 ## Créditos
 
 Baseado no [aria2](https://github.com/aria2/aria2) original, de Tatsuhiro Tsujikawa e colaboradores.
+
+## Doação
+
+Se o aria2-ultra foi útil para você, considere fazer uma doação via PayPal: **jv12802@gmail.com**

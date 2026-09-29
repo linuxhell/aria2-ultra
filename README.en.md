@@ -48,3 +48,7 @@ Improvements happen on a development branch; merges into the main branch only ha
 ## Credits
 
 Based on the original [aria2](https://github.com/aria2/aria2), by Tatsuhiro Tsujikawa and contributors.
+
+## Donate
+
+If aria2-ultra has been useful to you, consider donating via PayPal: **jv12802@gmail.com**

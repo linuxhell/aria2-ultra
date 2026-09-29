@@ -48,3 +48,7 @@
 ## 致谢
 
 基于 Tatsuhiro Tsujikawa 及其贡献者开发的原始 [aria2](https://github.com/aria2/aria2) 项目。
+
+## 捐赠
+
+如果 aria2-ultra 对你有帮助,欢迎通过 PayPal 捐赠支持：**jv12802@gmail.com**
