@@ -1,289 +1,86 @@
-# aria2-ultra — arquivo de retomada para o ChatGPT
+# Handoff para o ChatGPT — aria2-ultra (retomada 2026-09-29)
 
-Documento gerado pelo Claude (Anthropic) para dar continuidade ao trabalho no
-aria2-ultra. Contém tudo que foi feito, tudo que foi testado e a próxima
-tarefa concreta: aplicar uma correção no código-fonte do aria2-next e
-**compilar um `aria2-next.exe` para Windows x64** (algo que o Claude não
-conseguiu fazer porque o sandbox onde ele rodou só tem toolchain Linux).
+Este documento existe para dar contexto completo a um chat novo do ChatGPT sem histórico. Leia inteiro antes de mexer em qualquer coisa. Se este arquivo e o estado real do repositório (`git log`, PR aberto, CI) divergirem, **confie no repositório**, não neste texto.
 
-Repositório: https://github.com/linuxhell/aria2-ultra
-Branch: `claude/upbeat-cannon-7ovk29`
-Último commit no momento deste documento: `12f3b6e`
+Existe um documento irmão deste, `HANDOFF-CHATGPT.md`, no repositório `apocalipse-download-manager` (branch `prep-aria2-ultra`) — leia os dois, são complementares. Aqui é o fork do aria2; lá é o app desktop que consome os binários publicados por este repo.
 
----
+## O que é o aria2-ultra
 
-## 1. Contexto do projeto
+Fork do [aria2](https://github.com/aria2/aria2) clássico (base autotools/automake, C++11), **não** do aria2-next/libtorrent-rasterbar — essa abordagem foi tentada e abandonada cedo na história do projeto (ver `git log --oneline` dos commits antigos "Troca base vendorizada..." / "Volta base para aria2 classico"). Todo o trabalho atual é em cima do aria2 clássico vendorizado em `upstream/`.
 
-O usuário (dono do repo `linuxhell/aria2-ultra`) já tinha um pacote baseline
-Windows x64 do **aria2 clássico** (`aria2c.exe`, compilado a partir de
-`aria2/aria2@9e72735`, aria2 1.37.0), otimizado previamente pelo próprio
-ChatGPT para download direto (HTTP). Esse binário/config é o "padrão-ouro"
-de velocidade de download direto e **não deve ser alterado**.
+Objetivo do fork: adicionar suporte nativo a **BitTorrent v2 e híbrido (BEP 52)** diretamente na stack de BitTorrent já existente do aria2 clássico, sem trocar de engine.
 
-Pedido original do usuário:
-1. Testar e corrigir o script de diagnóstico de torrent v1
-   (`teste-torrent-v1-diagnostico.cmd`).
-2. Depois de v1 validado, implementar suporte a **BitTorrent v2 / híbrido
-   (BEP 52)**, sem mexer no download direto nem no v1 clássico.
-3. Um bug relatado: com torrent v1, ao chegar a ~100 MB baixados no disco, o
-   VLC não conseguia abrir a pré-visualização do vídeo.
-4. Outro bug relatado: o log do diagnóstico de torrent v1 passava de 300 MB.
+## Estrutura de branches
 
-## 2. O que já foi feito (commits `bbc2345` → `12f3b6e`)
+- **`claude/upbeat-cannon-7ovk29`** — branch principal/base do repositório GitHub (`linuxhell/aria2-ultra`). README/CHANGELOG em pt-BR/en/zh-CN, `.gitignore`, repo limpo de lixo (binário `aria2c.exe` de referência e afins já foram removidos do histórico daqui pra frente).
+- **`chatgpt/bep52-phase4`** — branch de desenvolvimento onde este trabalho está acontecendo, com PR #1 aberto contra `claude/upbeat-cannon-7ovk29`. **É aqui que você deve continuar.**
+- O diretório de trabalho local usado nesta sessão é `/tmp/interop-build` (checkout de `chatgpt/bep52-phase4`).
 
-### 2.1. Correções no aria2c clássico (v1)
-Arquivo `teste-torrent-v1-diagnostico.cmd`:
-- `--log-level=debug` → `--log-level=info` (o `debug` gravava todo o
-  tráfego de protocolo BitTorrent, causando o log de 300+ MB).
-- Adicionado `--bt-prioritize-piece=head=10M,tail=1M` (sem isso, o aria2
-  baixa peças em ordem "rarest-first"; mesmo com 100 MB no disco, o início
-  do arquivo de vídeo podia estar incompleto, por isso o VLC não abria).
+## O que já está pronto e validado nesta branch
 
-Esse script já foi testado pelo usuário e funcionou.
+### 1. BEP52 / BitTorrent v2 (fases 1-4)
+Parsing de metadados/magnet v2, verificação Merkle root/piece layers, infohash de 20 bytes correto em todos os caminhos de protocolo (handshake, tracker, DHT, peer-wire). Testado pelo usuário em hardware real: torrent v1/v2 funcionando, sem erros relacionados a hash.
 
-### 2.2. Decisão de arquitetura: aria2-next em vez de reimplementar BEP 52
+### 2. Defaults de performance ajustados na fonte (não é mais preciso passar flag nenhuma)
+Todos em `upstream/src/OptionHandlerFactory.cc`:
 
-O aria2 clássico **nunca implementou BitTorrent v2/híbrido** — seria
-necessário escrever esse suporte do zero em cima do stack BT próprio do
-aria2 (meses de trabalho). Em vez disso, adotamos como base o fork mantido
-**aria2-next** (https://github.com/AnInsomniacy/aria2-next), que já
-substituiu toda a stack de BitTorrent por **libtorrent-rasterbar 2.1**,
-com suporte nativo a v1, v2 e híbrido (detecta o formato sozinho pelo
-info-hash/metainfo, sem flag especial).
+- `-a/--file-allocation`: default mudou de `prealloc` para **`trunc`**. `upstream/src/RequestGroup.cc::setDownloadContext()` faz downgrade automático pra `none` especificamente em downloads BitTorrent (peças fora de ordem em vários arquivos não se beneficiam de alocação antecipada), só quando o valor ainda é o default compilado — um `--file-allocation` explícito do usuário sempre prevalece.
+- `-x/--max-connection-per-server`: `1` → **`16`**.
+- `-s/--split`: `5` → **`16`**.
+- `-k/--min-split-size`: `20M` → **`1M`** (senão qualquer arquivo abaixo de ~320M nunca alcançaria 16 segmentos, mesmo com `-s 16`).
 
-- `upstream/` no repo aria2-ultra agora contém o código-fonte do aria2-next
-  vendorizado (vendored) no commit `f58a2d9463b3b549ca19039b055df1448e1b8c46`
-  / tag `v2.8.3` (sem modificações locais ainda — ver seção 4 para a
-  modificação proposta).
-- O aria2 clássico (autotools) que estava vendorizado antes foi removido.
-- **Atenção a secret scanning do GitHub**: ao vendorizar o aria2-next,
-  o push original foi bloqueado pelo GitHub Push Protection por causa de
-  chaves privadas de demonstração antigas do OpenSSL/nghttp2 dentro de
-  `third_party/` (fixtures de teste, não segredos reais, mas o scanner
-  bloqueia mesmo assim). Foram removidos antes do commit:
-  - `upstream/third_party/nghttp2/integration-tests/{server.key,alt-server.key}`
-  - `upstream/third_party/openssl/apps/{client.pem,ca-key.pem,dsa-ca.pem,s512-key.pem,s1024key.pem,dsa-pca.pem,privkey.pem,rsa8192.pem,pca-key.pem,server2.pem,server.pem}`
-  Se for reclonar o aria2-next puro de novo, remova esses arquivos (ou
-  arquivos equivalentes) antes de tentar dar `git push`.
+Motivo: o usuário testou lado a lado (dois `.log` reais, 8.17GB ISO do Windows 11) — com 1 conexão (default antigo) apareceu uma queda real de throughput (~100MB/s → ~62MB/s) entre 80-88% do download, recuperando depois; com 16 conexões ficou uma linha praticamente reta em ~117.7MB/s do 0% ao 100%, 47% mais rápido no total (71s vs 103s). Confirmado via timestamp real de recebimento de rede no log (`WrDiskCacheEntry cache goff=`), não é artefato de log.
 
-### 2.3. Build do aria2-next testado no Linux (só validação, não é o alvo final)
+Esses três valores + o `file-allocation=trunc` batem exatamente com o baseline já validado em `tests/teste-direto-16-trunc-autosave.cmd` (que passa esses parâmetros explicitamente) — **esse script não deve ser alterado**, ele é a referência de regressão. Os scripts de torrent em `tests/teste-torrent*.cmd` usam `--file-allocation=none` explicitamente, consistente com o downgrade automático.
 
-Não havia binário Windows pronto à mão durante os testes do Claude, então
-ele baixou o binário oficial Linux x86_64 da release v2.8.3
-(`https://github.com/AnInsomniacy/aria2-next/releases/download/v2.8.3/aria2-next-2.8.3-linux-x86_64`)
-e testou comandos reais com ele, só para validar que as flags traduzidas
-funcionam (não precisa refazer isso, foi só uma etapa de validação).
+Verificação feita: rebuild completo + `make check` (todos passando) + `--help=#all` confirmando os novos defaults, em cada um dos commits que tocaram nesse arquivo.
 
-### 2.4. Tradução de flags: aria2 clássico → aria2-next
+### 3. Build 100% estático nas 3 plataformas (CI)
+Arquivo: `.github/workflows/bep52-phase4.yml`, três jobs (`linux-tests`, `macos-x64`, `windows-x64`).
 
-O aria2-next tem um "Legacy Input Adapter"
-(`upstream/src/LegacyInputAdapter.cc`) que traduz automaticamente a maioria
-das flags antigas do aria2 para os nomes novos, emitindo um aviso no log.
-Mapeamento relevante para o teste de download direto:
+**Requisito não-negociável do usuário**: o binário final não pode ter nenhuma DLL/`.so`/`.dylib` solta ao lado — tudo estaticamente linkado, exceto o que cada plataforma exige por natureza (macOS sempre depende dinamicamente de `libSystem`/frameworks da Apple; isso é inevitável e aceito).
 
-| Flag clássica | Flag nativa aria2-next | Observação |
-| --- | --- | --- |
-| `--split` + `--max-connection-per-server` | `--stream-max-connections` | usa o menor dos dois valores, capado em 256 |
-| `--auto-save-interval` | `--state-save-interval` | |
-| `--min-split-size` | *(nenhuma)* | **aposentada**, ignorada silenciosamente — o motor decide o tamanho de faixa HTTP sozinho (`--stream-max-range-size=0` = automático) |
-| `--file-allocation`, `--continue`, `--auto-file-renaming`, `--no-conf` | mesmos nomes | sem mudança |
-| `--bt-prioritize-piece=head,tail` | `--bt-first-last-piece-first=true` | booleano fixo (1% do arquivo), não aceita tamanho customizado como a flag antiga |
-| `--bt-request-peer-speed-limit`, `--bt-save-metadata`, `--bt-timeout`, etc. | *(nenhuma)* | aposentadas, veja a lista `RETIRED` em `LegacyInputAdapter.cc` linha ~499 |
+Mecanismo usado, depois de duas tentativas erradas:
+- **Não** use `LDFLAGS="-static" --disable-shared --enable-static` manualmente — isso NÃO funciona neste `Makefile` gerado (o `LDFLAGS` passado ao `./configure` não chega na linha de link final do `aria2c`; descoberto inspecionando o `src/Makefile` gerado, que mostrava `LDFLAGS = ` vazio).
+- **Use o mecanismo oficial do próprio aria2**: `./configure ARIA2_STATIC=yes` (documentado no `README.rst` do próprio aria2: "To build statically linked aria2, use ARIA2_STATIC=yes"). Isso ativa `pkg-config --static` E adiciona `-all-static` do libtool à linha de link — só isso força de verdade cada dependência de terceiros (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gcrypt, gmp...) a linkar estaticamente.
 
-### 2.5. Scripts novos criados (não alteram os antigos)
+Detalhes por plataforma:
+- **Linux** (`ubuntu-24.04`): `./configure ARIA2_STATIC=yes`. Precisou instalar `liblzma-dev` (dependência transitiva estática do OpenSSL via `pkg-config --static`, não vem com as outras `-dev`) e criar um symlink `libcares.a -> libcares_static.a` (o `libc-ares-dev` do Ubuntu 24.04 é buildado via CMake e nomeia o `.a` de forma não-convencional; sem o symlink, `-lcares` não acha o arquivo). Verificação: `ldd` no binário final não pode reportar nenhuma lib fora de `libc/libm/libpthread/libdl/librt/ld-linux`.
+- **Windows** (`windows-2022`, MSYS2 MINGW64 nativo): `LDFLAGS="-static-libgcc -static-libstdc++" ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl --disable-websocket ARIA2_STATIC=yes`. Cuidado histórico: `src/aria2c.exe` na árvore de build é um stub do libtool (só funciona junto de `src/.libs/`), o binário de verdade só existe depois de `make install DESTDIR=...`. Verificação: `ldd` no `.exe` final só pode mostrar DLLs de `C:\Windows\`.
+- **macOS** (`macos-13`): Apple/ld64 não tem modo `-static` de verdade (dependência dinâmica de `libSystem`/frameworks é obrigatória e aceita). Truque usado: antes de configurar, renomear/esconder os `.dylib` de cada fórmula Homebrew (`openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt`) pra forçar o linker a usar o `.a` estático que o Homebrew também instala. Depois `./configure ARIA2_STATIC=yes --disable-websocket` com `PKG_CONFIG_PATH` apontando pros `.pc` de cada fórmula. Verificação: `otool -L` no binário só pode mostrar dependências em `/usr/lib/` ou `/System/`.
 
-- `tests/teste-direto-16-trunc-autosave-next.cmd`: mesma regressão de
-  download direto (16 conexões, trunc, auto-save 60s), usando os nomes
-  nativos do aria2-next e `--state-dir` isolado por execução. **Corrigido**
-  para funcionar tanto solto na mesma pasta do `aria2-next.exe` quanto
-  dentro de uma subpasta `tests\` (bug relatado pelo usuário: o script
-  original só procurava o `.exe` uma pasta acima, e se não achasse, saía
-  sem `pause`, parecendo que "não abria").
-- `teste-torrent-v1v2-diagnostico-next.cmd`: diagnóstico de peers/trackers
-  equivalente ao v1 clássico, mas rodando sobre libtorrent — funciona com
-  torrent v1, v2 e híbrido sem distinção. Usa
-  `--bt-first-last-piece-first=true` para preview no VLC. **Testado pelo
-  usuário e funcionou perfeitamente** (torrent de 1,9 GiB completo em ~1 min).
-
-O binário `aria2-next.exe`/`aria2-next` não está no repositório — precisa
-ser baixado (release oficial) ou compilado à parte e colocado do lado dos
-scripts.
-
-## 3. O problema em aberto: download direto no aria2-next é ~9% mais lento
-
-O usuário rodou os dois testes de download direto (mesma ISO do Windows 11,
-back-to-back, mesmas condições de rede) e comparou os logs:
-
-| | Início | Fim | Duração |
-| --- | --- | --- | --- |
-| `teste-direto-16-trunc-autosave.cmd` (aria2c clássico) | 16:11:01,42 | 16:12:15,70 | **74,3 s** |
-| `teste-direto-16-trunc-autosave-next.cmd` (aria2-next) | 16:12:26,53 | 16:13:47,75 | **81,2 s** |
-
-Sintoma visual relatado: no aria2-next, o download "começou devagar e foi
-acelerando", diferente do aria2c clássico, que já é rápido do início ao fim.
-
-### 3.1. Investigação feita (código-fonte, `upstream/src/`)
-
-1. **Não é um "slow start" deliberado por design.** Em
-   `upstream/src/CurlDownloadImpl.h` e `upstream/src/stream/StreamStorage.cc`
-   linha ~218, `impl.connectionLimit` é inicializado **igual a**
-   `impl.maxConnections` (ou seja, começa já no máximo pedido, não sobe
-   gradualmente de 1). O mecanismo de "reward/penalize connection limit" em
-   `upstream/src/stream/StreamScheduling.cc` só REDUZ o limite reativamente
-   se o servidor responder HTTP 429/503, e depois recupera 1 conexão por
-   segundo — mas isso só entra em ação se houver overload real do servidor.
-
-2. **Confirmado por teste real**: o Claude baixou um arquivo grande (~1 GB,
-   tarball do LLVM, via GitHub Releases, com as mesmas flags traduzidas:
-   `--stream-max-connections=16 --state-dir=... --file-allocation=trunc
-   --state-save-interval=60 --continue=false --auto-file-renaming=false`)
-   rodando o binário Linux do aria2-next. Resultado: `CN:16` (16 conexões
-   simultâneas) já no primeiro segundo de execução, sem nenhuma rampa,
-   velocidade média de 162 MiB/s. **No Linux não há slow start algum.**
-
-3. **Causa raiz mais provável, achada em
-   `upstream/src/transport/CurlOptions.cc` linhas 17-23**:
-
-   ```cpp
-   long platformSslOptions() noexcept
-   {
-   #ifdef _WIN32
-     return CURLSSLOPT_REVOKE_BEST_EFFORT;
-   #else
-     return 0L;
-   #endif
-   }
-   ```
-
-   Essa flag é aplicada em **toda conexão TLS**, no Windows, via
-   `CURLOPT_SSL_OPTIONS`/`CURLOPT_PROXY_SSL_OPTIONS` (mesma função,
-   chamada em `configureTls()`, linhas ~55-70 do mesmo arquivo). No
-   Windows, o libcurl usa Schannel (confirmado no log do usuário:
-   `libcurl/8.21.0(Schannel;threaded DNS)`), e com
-   `CURLSSLOPT_REVOKE_BEST_EFFORT`, o Schannel **tenta** checar revogação
-   de certificado (OCSP/CRL) em cada handshake TLS — só não falha a conexão
-   se o serviço de revogação estiver inacessível, mas ainda assim **espera**
-   a tentativa (ou o timeout dela) antes de completar o handshake. Isso é
-   um problema de latência conhecido de libcurl+Schannel no Windows, e bate
-   exatamente com a diferença observada: no Linux (onde essa flag nem
-   existe — `0L`) não há atraso nenhum; no Windows, a primeira conexão
-   (que trava o início do paralelismo — veja `configurePlanner()` em
-   `StreamScheduling.cc`, que só libera as outras 15 conexões depois que a
-   primeira confirma suporte a `Range` e o tamanho total do arquivo) fica
-   sujeita a essa checagem de revogação em série, e as 16 conexões também
-   pagam esse custo individualmente ao abrir.
-
-   A correção padrão da comunidade curl para esse cenário é trocar
-   `CURLSSLOPT_REVOKE_BEST_EFFORT` por `CURLSSLOPT_NO_REVOKE` (pula a
-   checagem de revogação inteiramente, sem esperar por ela). Isso é uma
-   troca segurança-por-velocidade real (deixa de detectar certificados
-   revogados), então a recomendação é implementar como **flag opt-in**, não
-   mudar o padrão silenciosamente.
-
-### 3.2. Correção proposta (ainda NÃO aplicada no repositório)
-
-Em `upstream/src/transport/CurlOptions.cc`, algo no espírito de:
-
-```cpp
-long platformSslOptions(const Option* option) noexcept
-{
-#ifdef _WIN32
-  if (option->getAsBool(PREF_TLS_SKIP_REVOCATION_CHECK)) {
-    return CURLSSLOPT_NO_REVOKE;
-  }
-  return CURLSSLOPT_REVOKE_BEST_EFFORT;
-#else
-  (void)option;
-  return 0L;
-#endif
-}
+**Status do CI nesta sessão** (run mais recente no momento deste handoff): commit `ec6eba7` — Linux ✅ passou, Windows já passou em runs anteriores com essa mesma configuração, macOS historicamente demorando **mais de 1 hora na fila de runner** antes de sequer começar a rodar (fila normal de `macos-13` na GitHub, não é bug do workflow). **Confira o status atual antes de assumir qualquer coisa**:
 ```
+gh api repos/linuxhell/aria2-ultra/actions/runs?branch=chatgpt/bep52-phase4&per_page=1
+# ou pela UI: https://github.com/linuxhell/aria2-ultra/actions/workflows/bep52-phase4.yml
+```
+⚠️ O workflow tem `concurrency: cancel-in-progress: true` por branch — qualquer push novo cancela o run anterior inteiro, incluindo um macOS que já estava rodando/na fila. Evite pushes desnecessários enquanto o macOS estiver rodando.
 
-e então:
-1. Adicionar uma nova preferência `PREF_TLS_SKIP_REVOCATION_CHECK` /
-   `--tls-skip-revocation-check=[true|false]` (default `false`, para não
-   mudar comportamento/segurança por padrão) em `prefs.h`/`prefs.cc` e no
-   parser de opções (ver como outras opções booleanas de TLS, tipo
-   `--check-certificate`, estão registradas em `src/options/` e
-   `src/usage_text.h`, e documentar em
-   `docs/manual/en/aria2-next.rst` ao lado de `--check-certificate`).
-2. Atualizar a chamada `set(CURLOPT_SSL_OPTIONS, platformSslOptions());` e
-   `set(CURLOPT_PROXY_SSL_OPTIONS, platformSslOptions());` em
-   `configureTls()` para passar a `Option*` já disponível na função.
-3. Seguir as convenções do projeto descritas em `upstream/AGENTS.md`
-   (C++17, CMake é o único build system suportado, não adicionar
-   Autotools, manter comentários em inglês explicando o porquê, rodar
-   `cmake --preset default && cmake --build --preset default && ctest
-   --preset default` antes de considerar pronto).
+## O que falta fazer (nesta ordem)
 
-**Isso ainda não foi implementado nem testado** — é a próxima tarefa.
+1. **Confirmar CI verde nas 3 plataformas** no commit mais recente de `chatgpt/bep52-phase4` (atualmente `ec6eba7`, mas confira `git log -1` porque pode ter avançado).
+2. **Publicar uma Release real no GitHub** (`linuxhell/aria2-ultra`) — o usuário já aprovou isso explicitamente numa sessão anterior. Nomeação dos assets tem que bater com o que o `apocalipse-download-manager` espera (ver `apps/desktop/src-tauri/src/main.rs`, função `aria2_asset_suffix()`, e `.github/workflows/release.yml`/`test-build.yml` desse outro repo):
+   - `aria2c-windows-x64.exe` + `aria2c-windows-x64.exe.sha256`
+   - `aria2c-linux-x64` + `aria2c-linux-x64.sha256`
+   - `aria2c-macos-x64` + `aria2c-macos-x64.sha256`
+   Os artifacts do CI atual saem nomeados de forma diferente (`aria2-ultra-bep52-{linux,macos,windows}-x64`, contendo `dist/aria2c` ou `dist/aria2c.exe`) — vai precisar renomear/reempacotar na hora de subir os assets da Release, ou ajustar o workflow pra já produzir com o nome final.
+3. **Depois da Release publicada**, ir para o repositório `apocalipse-download-manager` e atualizar `aria2_release_repo` lá — ver a seção abaixo e o handoff próprio desse repo.
 
-## 4. Por que isso precisa ser retomado por outra ferramenta
+## `apocalipse-download-manager` — o app que consome este fork (repo irmão, branch `prep-aria2-ultra`)
 
-O Claude rodou num sandbox **Linux only**, sem toolchain Windows. O
-aria2-next é compilado nativamente no Windows via MSYS2 + clang
-(`Compiler: clang 22.1.5 ... built by x86_64-Windows`, conforme o próprio
-log de versão). Não é uma questão de cross-compile trivial — o pipeline
-oficial deles (`docs/CONTRIBUTING.md`, `README.md` do aria2-next) espera
-MSYS2 fornecendo shell/Make/Perl e o toolchain nativo do Windows para
-compilar libcurl, libtorrent, GPAC, FFmpeg etc. (superbuild que compila
-tudo de `third_party/` do zero).
+Não é este repositório, mas depende diretamente dele: é o app desktop (Tauri, Rust + browser extension) que baixa o `aria2c` publicado aqui como Release asset e o usa como motor de download. Tem um `HANDOFF-CHATGPT.md` próprio lá com todo o detalhe; resumo do que já foi feito nessa mesma leva de trabalho:
 
-## 5. Tarefas concretas para o ChatGPT
+- **Bug real corrigido**: o app forçava `--file-allocation=none` tanto no daemon (`apps/desktop/src-tauri/src/aria2.rs`, `spawn_once`) quanto em cada download HTTP/FTP (`add_download()`), anulando silenciosamente o novo default `trunc` deste fork — ou seja, mesmo com este fork mais rápido, o app nunca exercitava isso. Corrigido: os dois overrides foram removidos, o daemon agora herda o default do próprio aria2-ultra.
+- **Logs de diagnóstico corrigidos**: antes diziam `backend=classic` e `fileAllocation=none` fixo mesmo quando não era mais verdade. Agora registram a versão real via `aria2.getVersion()`, `backend=aria2-ultra`, e o `fileAllocation` real por tipo de download (`trunc` pra direto, `none` pra BT). Também passou a logar a mensagem de erro do aria2 quando um download falha (`status=error/removed`), que antes só sobrevivia se estivesse por acaso no `aria2.log`.
+- **`connections_per_download` no app já é 16 por padrão** (`main.rs`, `default_connections()`) — ou seja, quem baixa pela UI do app já usava 16 conexões via RPC. O problema de "só 1 conexão" que o usuário viu nos testes era só porque ele estava chamando o `aria2c.exe` **direto pelo `.cmd`**, sem passar flag nenhuma — daí a mudança de default #2 desta lista, feita aqui no aria2-ultra, também beneficiar qualquer uso direto do binário fora do app.
+- **Interceptação do link de uso único do Rapidgator via Shift**: implementado com `declarativeNetRequest` (regra de rede temporária por aba, some sozinha) porque o link final é gerado via `location.href` pelo próprio JS do site, que é uma propriedade "unforgeable" no Chrome — não dá pra interceptar isso só com hooks de JavaScript de página (`fetch`/`click`/`window.open`, que já existiam e funcionam para outros casos). **Não testado contra o site real**, só revisão de código — precisa validação manual.
+- **UI**: checkbox de "extrair ao terminar" só aparece se o download for detectado como arquivo compactado; controles de `.torrent` (salvar/limpar) em `data/torrents` (ou `data\torrents` no Windows), path já tratado corretamente via `PathBuf::join` do Rust.
+- **`aria2_release_repo`** (setting em `main.rs`, default atualmente `"FerroDownload/aria2-static-builds"`) — **ainda não foi trocado** pra apontar pro `linuxhell/aria2-ultra`. Depende do passo 2 da lista acima (Release publicada primeiro). Não decidido ainda se muda só o default do setting, ou também o fetch hardcoded em `.github/workflows/release.yml`/`test-build.yml` desse repo — perguntar ao usuário se não estiver claro no handoff de lá.
+- **Gap real identificado, sem código ainda**: os logs desse app não distinguem torrent v1/v2/híbrido (nenhum campo tipo `metaVersion` do RPC é capturado). Então mesmo com os logs corrigidos, se o BEP52 (a razão de existir deste fork) tiver um bug específico de v2/híbrido, não dá pra provar isso só pelos logs — precisaria de teste manual com um torrent v2/híbrido conhecido, ou de instrumentação nova ali.
 
-1. **Ambiente**: configurar MSYS2 (ou equivalente) num Windows real com
-   CMake 3.25+, Ninja, clang, Make, Perl — conforme
-   `upstream/README.md` (seção "Build") e `upstream/docs/CONTRIBUTING.md`
-   do próprio aria2-next.
-2. **Clonar/atualizar** o código já vendorizado: pode partir do que já está
-   em `upstream/` dentro de
-   `https://github.com/linuxhell/aria2-ultra` (branch
-   `claude/upbeat-cannon-7ovk29`), que é uma cópia exata do aria2-next
-   v2.8.3 (`f58a2d9`), sem modificações.
-3. **Aplicar a correção da seção 3.2** (flag `--tls-skip-revocation-check`
-   ou nome equivalente) em `upstream/src/transport/CurlOptions.cc` e nos
-   arquivos de opções relacionados.
-4. **Compilar**:
-   ```powershell
-   cmake --preset default
-   cmake --build --preset default
-   ctest --preset default
-   build/default/aria2-next --version
-   ```
-5. **Testar** rodando `tests/teste-direto-16-trunc-autosave-next.cmd` (já
-   está no repositório) duas vezes com a mesma ISO da Microsoft: uma vez
-   sem a flag nova (comportamento atual) e outra com
-   `--tls-skip-revocation-check=true` adicionado ao comando dentro do
-   script, comparando os tempos totais (`ULTRA TEST: begin=... end=...` no
-   log) contra os **74,3 s** do aria2c clássico já medidos.
-6. **Se a hipótese se confirmar** (tempo cai para perto de 74s com a flag
-   nova): comitar a mudança em `upstream/`, atualizar
-   `tests/teste-direto-16-trunc-autosave-next.cmd` para incluir a flag por
-   padrão (ou documentar como recomendação no README), e enviar
-   (`git push`) para a branch `claude/upbeat-cannon-7ovk29` do repositório
-   `linuxhell/aria2-ultra`. **Cuidado com o Push Protection do GitHub**
-   (seção 2.2) se precisar revendorizar third_party do zero.
-7. **Se não confirmar**: documentar o resultado e considerar a alternativa
-   já validada — usar `aria2c.exe` clássico para download direto e
-   `aria2-next.exe` só para torrent v1/v2/híbrido (estratégia de "dois
-   binários", cada um no que é melhor).
+## Regras que valem para qualquer trabalho futuro aqui
 
-## 6. Arquivos-chave para consulta rápida
-
-- `upstream/AGENTS.md` — regras de contribuição do aria2-next (build,
-  versionamento, release, convenções de código).
-- `upstream/src/transport/CurlOptions.cc` — configuração de TLS (o alvo da
-  correção).
-- `upstream/src/stream/StreamScheduling.cc` — escalonador de conexões HTTP
-  (`configurePlanner`, `rewardConnectionLimit`, `penalizeConnectionLimit`).
-- `upstream/src/LegacyInputAdapter.cc` — tradução de flags clássicas do
-  aria2 para os nomes nativos do aria2-next.
-- `upstream/docs/manual/en/aria2-next.rst` — manual de opções de linha de
-  comando (procurar por `--check-certificate`, `--stream-max-connections`
-  para ver o padrão de documentação a seguir).
-- `README.md` (raiz do aria2-ultra) — visão geral do projeto e tabela dos
-  scripts de teste.
-- `teste-torrent-v1-diagnostico.cmd`, `teste-torrent-v1v2-diagnostico-next.cmd`,
-  `tests/teste-direto-16-trunc-autosave.cmd`,
-  `tests/teste-direto-16-trunc-autosave-next.cmd` — scripts de teste
-  citados acima.
+- **Nunca commitar binário compilado no repositório.** Binários só existem como artifact de CI ou asset de Release.
+- **Sempre consultar os scripts de teste validados** (`tests/teste-direto-16-trunc-autosave.cmd` para download direto, `tests/teste-torrent*.cmd` para torrent) antes de mexer em qualquer parâmetro de performance — eles são a fonte da verdade do que já foi comprovado funcionar bem, não adivinhe.
+- **Todo binário final tem que ser estático** nas 3 plataformas, sem exceção (além do que cada SO exige nativamente).
+- Este arquivo deve ser mantido atualizado ou apagado quando ficar obsoleto — não deixe virar lixo desatualizado igual ao anterior (que descrevia uma arquitetura aria2-next que não existe mais neste repo e foi removido por isso).
