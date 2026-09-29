@@ -27,6 +27,7 @@ class BittorrentHelperTest : public CppUnit::TestFixture {
 
   CPPUNIT_TEST_SUITE(BittorrentHelperTest);
   CPPUNIT_TEST(testGetInfoHash);
+  CPPUNIT_TEST(testGetWireInfoHash);
   CPPUNIT_TEST(testGetPieceHash);
   CPPUNIT_TEST(testGetFileEntries);
   CPPUNIT_TEST(testGetTotalLength);
@@ -94,6 +95,7 @@ public:
   }
 
   void testGetInfoHash();
+  void testGetWireInfoHash();
   void testGetPieceHash();
   void testGetFileEntries();
   void testGetTotalLength();
@@ -386,6 +388,27 @@ void BittorrentHelperTest::testGetInfoHash()
   std::string correctHash = "248d0a1cd08284299de78d5c1ed359bb46717d8c";
 
   CPPUNIT_ASSERT_EQUAL(correctHash, bittorrent::getInfoHashString(dctx));
+}
+
+void BittorrentHelperTest::testGetWireInfoHash()
+{
+  auto v1 = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/test.torrent", v1, option_);
+  CPPUNIT_ASSERT_EQUAL(bittorrent::getInfoHashString(v1),
+                       bittorrent::getWireInfoHashString(v1));
+
+  auto v2 = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/v2_only.torrent", v2, option_);
+  CPPUNIT_ASSERT(getTorrentAttrs(v2)->infoHash.empty());
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("95e04d0c4bad94ab206efa884666fd89777dbe4f"),
+      bittorrent::getWireInfoHashString(v2));
+
+  auto hybrid = std::make_shared<DownloadContext>();
+  load(A2_TEST_DIR "/fixtures/bep52/hybrid.torrent", hybrid, option_);
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("c14199bbec64d0e9e439aa3b6b7639e666b86eca"),
+      bittorrent::getWireInfoHashString(hybrid));
 }
 
 void BittorrentHelperTest::testGetPieceHash()
