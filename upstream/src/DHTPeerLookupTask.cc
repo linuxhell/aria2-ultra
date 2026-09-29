@@ -58,7 +58,7 @@ namespace aria2 {
 DHTPeerLookupTask::DHTPeerLookupTask(
     const std::shared_ptr<DownloadContext>& downloadContext, uint16_t tcpPort)
     : DHTAbstractNodeLookupTask<DHTGetPeersReplyMessage>(
-          bittorrent::getInfoHash(downloadContext)),
+          bittorrent::getWireInfoHash(downloadContext)),
       tcpPort_(tcpPort)
 {
 }
