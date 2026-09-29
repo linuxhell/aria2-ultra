@@ -256,7 +256,7 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
     }
     if (btReg->getLpdMessageReceiver()) {
       const unsigned char* infoHash =
-          bittorrent::getInfoHash(requestGroup->getDownloadContext());
+          bittorrent::getWireInfoHash(requestGroup->getDownloadContext());
       A2_LOG_INFO("Initializing LpdMessageDispatcher.");
       auto dispatcher = std::make_shared<LpdMessageDispatcher>(
           std::string(&infoHash[0], &infoHash[INFO_HASH_LENGTH]),
