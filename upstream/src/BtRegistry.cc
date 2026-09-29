@@ -67,11 +67,23 @@ const std::shared_ptr<DownloadContext>&
 BtRegistry::getDownloadContext(const std::string& infoHash) const
 {
   for (auto& kv : pool_) {
-    const auto* wireInfoHash =
-        bittorrent::getWireInfoHash(kv.second->downloadContext);
-    if (wireInfoHash && infoHash.size() == INFO_HASH_LENGTH &&
-        memcmp(wireInfoHash, infoHash.data(), INFO_HASH_LENGTH) == 0) {
+    const auto* attrs =
+        bittorrent::getTorrentAttrs(kv.second->downloadContext);
+    // Preserve the original v1 registry semantics exactly.  This also
+    // matters for local/session callers that use synthetic short hashes.
+    if (!attrs->infoHash.empty() && attrs->infoHash == infoHash) {
       return kv.second->downloadContext;
+    }
+
+    // Pure v2 torrents have no SHA-1 info-hash, so incoming classic
+    // peer-wire connections are keyed by the BEP 52 truncated 20-byte hash.
+    if (attrs->infoHash.empty() && infoHash.size() == INFO_HASH_LENGTH) {
+      const auto* wireInfoHash =
+          bittorrent::getWireInfoHash(kv.second->downloadContext);
+      if (wireInfoHash &&
+          memcmp(wireInfoHash, infoHash.data(), INFO_HASH_LENGTH) == 0) {
+        return kv.second->downloadContext;
+      }
     }
   }
   return getNull<DownloadContext>();
