@@ -290,14 +290,7 @@ case "$host" in
     have_osx="yes"
   ;;
   *mingw*)
-    AC_CHECK_HEADERS([windows.h \
-                      winsock2.h \
-                      ws2tcpip.h \
-                      mmsystem.h \
-                      io.h \
-                      iphlpapi.h\
-                      winioctl.h \
-                      share.h], [], [],
+    AC_CHECK_HEADERS([windows.h winsock2.h ws2tcpip.h mmsystem.h io.h iphlpapi.h winioctl.h share.h], [], [],
                       [[
 #ifdef HAVE_WS2TCPIP_H
 # include <ws2tcpip.h>

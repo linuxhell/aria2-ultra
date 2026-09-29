@@ -37,6 +37,8 @@
 #include <cassert>
 #include <cstring>
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 
 #include "DownloadContext.h"
 #include "Randomizer.h"
@@ -149,7 +151,7 @@ bool verifyV2PieceLayer(const std::string& layer,
   const size_t count = layer.size() / 32;
   size_t width = 1;
   while (width < count) {
-    if (width > SIZE_MAX / 2) return false;
+    if (width > std::numeric_limits<size_t>::max() / 2) return false;
     width *= 2;
   }
   // At the piece layer, an absent piece covers an entire zero-leaf subtree.
