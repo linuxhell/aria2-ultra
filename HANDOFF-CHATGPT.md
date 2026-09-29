@@ -12,7 +12,8 @@ Objetivo do fork: adicionar suporte nativo a **BitTorrent v2 e híbrido (BEP 52)
 
 ## Estrutura de branches
 
-- **`claude/upbeat-cannon-7ovk29`** — branch principal/base do repositório GitHub (`linuxhell/aria2-ultra`). README/CHANGELOG em pt-BR/en/zh-CN, `.gitignore`, repo limpo de lixo (binário `aria2c.exe` de referência e afins já foram removidos do histórico daqui pra frente).
+- **`claude/upbeat-cannon-7ovk29`** — branch principal/base do repositório GitHub (`linuxhell/aria2-ultra`). README/CHANGELOG em pt-BR/en/zh-CN, `.gitignore`, repo limpo de lixo (binário `aria2c.exe` de referência e afins já foram removidos do histórico daqui pra frente). README já tem: tabela de desempenho medido (clássico vs aria2-next vs aria2-ultra, ver seção 2 abaixo) e seção de doação (PayPal `jv12802@gmail.com`).
+  ⚠️ **Essa branch está à frente de `chatgpt/bep52-phase4` só nesses arquivos de documentação** (README/CHANGELOG/.gitignore) — o trabalho de código (BEP52, defaults, CI estático) está em `chatgpt/bep52-phase4` e ainda não foi mergeado pra cá via PR #1. As duas branches vão precisar convergir em algum momento; não presuma que uma tem tudo que a outra tem.
 - **`chatgpt/bep52-phase4`** — branch de desenvolvimento onde este trabalho está acontecendo, com PR #1 aberto contra `claude/upbeat-cannon-7ovk29`. **É aqui que você deve continuar.**
 - O diretório de trabalho local usado nesta sessão é `/tmp/interop-build` (checkout de `chatgpt/bep52-phase4`).
 
@@ -30,6 +31,8 @@ Todos em `upstream/src/OptionHandlerFactory.cc`:
 - `-k/--min-split-size`: `20M` → **`1M`** (senão qualquer arquivo abaixo de ~320M nunca alcançaria 16 segmentos, mesmo com `-s 16`).
 
 Motivo: o usuário testou lado a lado (dois `.log` reais, 8.17GB ISO do Windows 11) — com 1 conexão (default antigo) apareceu uma queda real de throughput (~100MB/s → ~62MB/s) entre 80-88% do download, recuperando depois; com 16 conexões ficou uma linha praticamente reta em ~117.7MB/s do 0% ao 100%, 47% mais rápido no total (71s vs 103s). Confirmado via timestamp real de recebimento de rede no log (`WrDiskCacheEntry cache goff=`), não é artefato de log.
+
+O usuário também rodou o mesmo arquivo no **aria2-next** (`--stream-max-connections=16 --file-allocation=trunc`, confirmado por print de tela com `CN:16`), pra comparação justa: 88,98s (~91,8MB/s) contra os 71s (~115,1MB/s) do aria2-ultra — **aria2-ultra ~20% mais rápido que o aria2-next**. Esses três números (clássico/aria2-next/aria2-ultra) já estão documentados como tabela no README (branch `claude/upbeat-cannon-7ovk29`, ver abaixo).
 
 Esses três valores + o `file-allocation=trunc` batem exatamente com o baseline já validado em `tests/teste-direto-16-trunc-autosave.cmd` (que passa esses parâmetros explicitamente) — **esse script não deve ser alterado**, ele é a referência de regressão. Os scripts de torrent em `tests/teste-torrent*.cmd` usam `--file-allocation=none` explicitamente, consistente com o downgrade automático.
 
@@ -49,7 +52,7 @@ Detalhes por plataforma:
 - **Windows** (`windows-2022`, MSYS2 MINGW64 nativo): `LDFLAGS="-static-libgcc -static-libstdc++" ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl --disable-websocket ARIA2_STATIC=yes`. Cuidado histórico: `src/aria2c.exe` na árvore de build é um stub do libtool (só funciona junto de `src/.libs/`), o binário de verdade só existe depois de `make install DESTDIR=...`. Verificação: `ldd` no `.exe` final só pode mostrar DLLs de `C:\Windows\`.
 - **macOS** (`macos-13`): Apple/ld64 não tem modo `-static` de verdade (dependência dinâmica de `libSystem`/frameworks é obrigatória e aceita). Truque usado: antes de configurar, renomear/esconder os `.dylib` de cada fórmula Homebrew (`openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt`) pra forçar o linker a usar o `.a` estático que o Homebrew também instala. Depois `./configure ARIA2_STATIC=yes --disable-websocket` com `PKG_CONFIG_PATH` apontando pros `.pc` de cada fórmula. Verificação: `otool -L` no binário só pode mostrar dependências em `/usr/lib/` ou `/System/`.
 
-**Status do CI nesta sessão** (run mais recente no momento deste handoff): commit `ec6eba7` — Linux ✅ passou, Windows já passou em runs anteriores com essa mesma configuração, macOS historicamente demorando **mais de 1 hora na fila de runner** antes de sequer começar a rodar (fila normal de `macos-13` na GitHub, não é bug do workflow). **Confira o status atual antes de assumir qualquer coisa**:
+**Status do CI nesta sessão** (run mais recente no momento deste handoff, run id `36605585967`, commit `ec6eba7`): Linux ✅ passou, Windows ✅ passou, **macOS ficou mais de 2 horas parado em `queued`** sem sequer começar a rodar — é fila normal de runner `macos-13` na GitHub (aconteceu em praticamente todo run desta sessão), não é bug do workflow, mas é bom saber que pode demorar bastante antes de assumir que algo travou. **Confira o status atual antes de assumir qualquer coisa**:
 ```
 gh api repos/linuxhell/aria2-ultra/actions/runs?branch=chatgpt/bep52-phase4&per_page=1
 # ou pela UI: https://github.com/linuxhell/aria2-ultra/actions/workflows/bep52-phase4.yml
