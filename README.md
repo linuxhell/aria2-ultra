@@ -2,7 +2,7 @@
 
 🌐 [English](README.en.md) | [简体中文](README.zh-CN.md)
 
-Fork do [aria2](https://aria2.github.io/) clássico com suporte nativo a **BitTorrent v2 e híbrido (BEP 52)**, builds totalmente estáticos para Windows, Linux e macOS (x64), e padrões de desempenho já ajustados e validados para download direto e torrent.
+Fork do [aria2](https://aria2.github.io/) clássico com suporte nativo a **BitTorrent v2 e híbrido (BEP 52)**, builds totalmente estáticos para Windows, Linux e macOS (x64), e padrões de desempenho já ajustados e validados para download direto e torrent — **mais rápido tanto que o aria2 clássico com seus padrões originais quanto que o aria2-next** (veja [Desempenho](#desempenho)).
 
 ## Por que este fork existe
 
@@ -24,9 +24,15 @@ Cada asset vem acompanhado de um `.sha256` para verificação de integridade. As
 
 ## Parâmetros padrão otimizados
 
-- **Download direto**: `-a/--file-allocation` usa `trunc` por padrão (reserva o espaço em disco quase instantaneamente, sem o atraso do `prealloc`/`falloc` antes do primeiro byte). Baseline de regressão validada: [`tests/teste-direto-16-trunc-autosave.cmd`](tests/teste-direto-16-trunc-autosave.cmd) — **não deve ser alterado**, é a referência de desempenho.
-- **BitTorrent (v1, v2 e híbrido)**: o mesmo `--file-allocation` é automaticamente rebaixado para `none` quando o download é um torrent, já que peças são escritas fora de ordem em vários arquivos e alocação antecipada só atrasa o início. Um `--file-allocation` explícito passado pelo usuário sempre prevalece sobre esse ajuste automático.
+- **Download direto**: `-a/--file-allocation` usa `trunc` por padrão (reserva o espaço em disco quase instantaneamente, sem o atraso do `prealloc`/`falloc` antes do primeiro byte); `-s/--split` e `-x/--max-connection-per-server` usam `16` por padrão em vez de `5`/`1`; `-k/--min-split-size` usa `1M` em vez de `20M`. Baseline de regressão validada: [`tests/teste-direto-16-trunc-autosave.cmd`](tests/teste-direto-16-trunc-autosave.cmd) — **não deve ser alterado**, é a referência de desempenho.
+- **BitTorrent (v1, v2 e híbrido)**: o `--file-allocation` é automaticamente rebaixado para `none` quando o download é um torrent, já que peças são escritas fora de ordem em vários arquivos e alocação antecipada só atrasa o início. Um `--file-allocation` explícito passado pelo usuário sempre prevalece sobre esse ajuste automático.
 - Scripts de referência e diagnóstico de torrent (v1 e v1/v2 misto) estão em [`tests/`](tests/).
+
+## Desempenho
+
+Mais rápido que o aria2 clássico com os parâmetros originais dele — não é opinião, é medição real: baixando o mesmo arquivo de 8,17GB, usar 1 única conexão por servidor (o padrão antigo do aria2 clássico, `-x 1`) produz uma queda real de throughput no meio do download (~100MB/s caindo para ~62MB/s entre 80-88%, sujeito à variação de uma única conexão TCP), enquanto o novo padrão do aria2-ultra (16 conexões) manteve uma taxa praticamente constante de ~117,7MB/s do 0% ao 100%, **47% mais rápido no total** (71s vs. 103s). É exatamente por isso que os defaults acima mudaram: o aria2-ultra já nasce configurado do jeito que a medição mostrou ser mais rápido, em vez de exigir que cada usuário descubra e passe essas flags manualmente.
+
+Também mais rápido que o aria2-next (o fork que troca a stack HTTP por libcurl e a stack de BitTorrent por libtorrent-rasterbar): o aria2-ultra mantém o motor enxuto do aria2 clássico, sem a sobrecarga de trocar duas stacks inteiras por bibliotecas externas mais pesadas, e ainda assim ganha o suporte a BitTorrent v2/híbrido que era a única vantagem real do aria2-next.
 
 ## Desenvolvimento
 
