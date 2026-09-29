@@ -59,7 +59,7 @@ jobs:
         working-directory: upstream
         run: |
           autoreconf -i
-          ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl
+          ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl --disable-websocket
       - name: Build
         shell: msys2 {0}
         working-directory: upstream
