@@ -35,4 +35,9 @@ jobs:
           ./configure --with-openssl --without-gnutls
       - name: Build and test
         working-directory: upstream
-        run: make -j2 check
+        run: |
+          if ! make -j2 check; then
+            echo "===== test/test-suite.log ====="
+            cat test/test-suite.log || true
+            exit 1
+          fi
