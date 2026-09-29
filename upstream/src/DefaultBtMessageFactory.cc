@@ -57,7 +57,7 @@
 #include "BtAllowedFastMessage.h"
 #include "BtHandshakeMessage.h"
 #include "BtHandshakeMessageValidator.h"
-#include "BtExtendedMessage.h"
+#include "BtHashRequestMessage.h"\n#include "BtHashesMessage.h"\n#include "BtHashRejectMessage.h"\n#include "BtExtendedMessage.h"
 #include "ExtensionMessage.h"
 #include "Peer.h"
 #include "Piece.h"
@@ -215,6 +215,15 @@ DefaultBtMessageFactory::createBtMessage(const unsigned char* data,
       msg = std::move(m);
       break;
     }
+    case BtHashRequestMessage::ID:
+      msg = BtHashRequestMessage::create(data, dataLength);
+      break;
+    case BtHashesMessage::ID:
+      msg = BtHashesMessage::create(data, dataLength);
+      break;
+    case BtHashRejectMessage::ID:
+      msg = BtHashRejectMessage::create(data, dataLength);
+      break;
     case BtExtendedMessage::ID: {
       if (peer_->isExtendedMessagingEnabled()) {
         msg = BtExtendedMessage::create(extensionMessageFactory_, peer_, data,
