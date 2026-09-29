@@ -1,9 +1,15 @@
 name: BEP52 phase 4 CI
 
 on:
+  push:
+    branches: [chatgpt/bep52-phase4]
   pull_request:
     branches: [claude/upbeat-cannon-7ovk29]
   workflow_dispatch:
+
+concurrency:
+  group: bep52-phase4-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
