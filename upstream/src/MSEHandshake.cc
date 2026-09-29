@@ -423,7 +423,7 @@ bool MSEHandshake::receiveReceiverHashAndPadCLength(
   std::shared_ptr<DownloadContext> downloadContext;
   for (auto& ctx : downloadContexts) {
     unsigned char md[20];
-    const auto infohash = bittorrent::getInfoHash(ctx);
+    const auto infohash = bittorrent::getWireInfoHash(ctx);
     createReq23Hash(md, infohash);
     if (memcmp(md, rbufptr, sizeof(md)) == 0) {
       A2_LOG_DEBUG(fmt("CUID#%" PRId64 " - info hash found: %s", cuid_,
@@ -435,7 +435,7 @@ bool MSEHandshake::receiveReceiverHashAndPadCLength(
   if (!downloadContext) {
     throw DL_ABORT_EX("Unknown info hash.");
   }
-  initCipher(bittorrent::getInfoHash(downloadContext));
+  initCipher(bittorrent::getWireInfoHash(downloadContext));
   // decrypt VC
   rbufptr += 20;
   verifyVC(rbufptr);
