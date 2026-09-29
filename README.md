@@ -1,45 +1,37 @@
 # aria2-ultra
 
-Fork experimental do aria2 (via [aria2-next](https://github.com/AnInsomniacy/aria2-next)), com foco em:
+🌐 [English](README.en.md) | [简体中文](README.zh-CN.md)
 
-- preservar o desempenho de download direto validado no pacote baseline do Windows;
-- manter compatibilidade com BitTorrent v1;
-- BitTorrent v2 e torrents híbridos (nativos via libtorrent-rasterbar no aria2-next);
-- produzir builds x64 para Windows, Linux e macOS.
+Fork do [aria2](https://aria2.github.io/) clássico com suporte nativo a **BitTorrent v2 e híbrido (BEP 52)**, builds totalmente estáticos para Windows, Linux e macOS (x64), e padrões de desempenho já ajustados e validados para download direto e torrent.
 
-## Baseline imutável de referência
+## Por que este fork existe
 
-Pacote recebido em 2026-09-28: `aria2-ultra-diagnostico-v5-windows-x64 (1)(1).zip`.
+O aria2 clássico nunca implementou BitTorrent v2/híbrido (BEP 52). O aria2-ultra adiciona esse suporte diretamente em cima da stack de BitTorrent já existente no aria2 (sem trocar de engine, sem depender de bibliotecas externas como libtorrent-rasterbar), preservando 100% de compatibilidade com torrents v1 e com todas as demais funcionalidades do aria2.
 
-- `aria2c.exe` SHA-256: `29a91e6ae814e754a1464fca00d8204c331e583c002de75ad72b640e8793f5cf`
-- upstream indicado pelo próprio pacote: `aria2/aria2@9e7273583f83e881e3ec067b523ba88724088d2f`
-- teste de regressão principal: `tests/teste-direto-16-trunc-autosave.cmd` (é o que comprova que o download direto do aria2c está otimizado; **não deve ser alterado**)
-- parâmetros essenciais desse teste: `--file-allocation=trunc --auto-save-interval=60 --split=16 --max-connection-per-server=16 --min-split-size=1M`
+## Binários
 
-O binário baseline (`aria2c.exe` na raiz) não é substituído nem tratado como fonte. Ele fica congelado aqui só como referência de comparação de desempenho.
+O diretório `upstream/` contém o código-fonte do aria2 clássico (autotools/automake), vendorizado a partir de um commit fixo, com os patches do aria2-ultra aplicados por cima.
 
-## Código-fonte: aria2-next como base
+Baixe os binários prontos na [página de Releases](../../releases). Cada plataforma é publicada seguindo suas próprias convenções nativas:
 
-O diretório `upstream/` contém o código-fonte do [aria2-next](https://github.com/AnInsomniacy/aria2-next) (fork mantido do aria2, build CMake/Ninja), vendorizado sem modificações. É a base de onde o desenvolvimento do aria2-ultra parte a partir de agora.
-
-Motivo da troca: o aria2 clássico (vendorizado antes neste repositório, agora removido) nunca implementou BitTorrent v2/híbrido (BEP 52) — seria necessário escrever esse suporte do zero em cima do stack BT próprio do aria2. O aria2-next já resolve isso: ele substituiu a stack de BitTorrent inteira por **libtorrent-rasterbar 2.1**, que suporta v1, v2 e híbrido nativamente (basta apontar o mesmo magnet/`.torrent`, sem flag especial — libtorrent detecta o formato sozinho). HTTP/HTTPS passam a usar libcurl.
-
-Isso muda os nomes de várias flags de linha de comando em relação ao aria2 clássico. O aria2-next tem um adaptador de compatibilidade que traduz automaticamente a maioria das flags antigas (`--split`, `--max-connection-per-server`, `--auto-save-interval`, etc.) para os nomes nativos, emitindo um aviso no log — exceto `--min-split-size`, que foi aposentada (o motor decide o tamanho de faixa HTTP automaticamente) e é apenas ignorada, sem erro.
-
-## Scripts de teste
-
-| Script | Binário | O que valida |
+| Plataforma | Arquivo | Observação |
 | --- | --- | --- |
-| `tests/teste-direto-16-trunc-autosave.cmd` | `aria2c.exe` (baseline clássico) | Regressão de download direto — **não alterar** |
-| `tests/teste-direto-16-trunc-autosave-next.cmd` | `aria2-next.exe` | Mesma regressão, com as flags traduzidas para os nomes nativos do aria2-next (`--stream-max-connections`, `--state-save-interval`, `--state-dir` isolado por execução) |
-| `teste-torrent-v1-diagnostico.cmd` | `aria2c.exe` (baseline clássico) | Diagnóstico de peers/trackers em torrent v1 |
-| `teste-torrent-v1v2-diagnostico-next.cmd` | `aria2-next.exe` | Mesmo diagnóstico, mas via libtorrent — funciona com torrent v1, v2 e híbrido sem distinção, e prioriza o início/fim de cada arquivo (`--bt-first-last-piece-first=true`) para permitir pré-visualização no VLC durante o download |
-| `teste-torrent.cmd` | `aria2c.exe` (baseline clássico) | Teste manual genérico de torrent |
+| Windows x64 | `aria2c-windows-x64.exe` | Um único `.exe`, sem nenhuma DLL solta ao lado — tudo (libaria2, OpenSSL/wintls, libxml2, sqlite3, c-ares, libssh2, zlib, runtime do compilador) linkado estaticamente dentro do binário. |
+| Linux x64 | `aria2c-linux-x64` | Binário estático (sem dependências dinâmicas além das bibliotecas base do sistema). |
+| macOS x64 | `aria2c-macos-x64` | Todas as dependências de terceiros (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gmp, gcrypt) linkadas estaticamente. Só permanece dinâmico o vínculo com as bibliotecas do próprio sistema Apple (`libSystem`/frameworks), que a Apple exige e nenhum app pode evitar — cada plataforma respeita as convenções do seu próprio formato de binário.
 
-Os binários `aria2-next.exe`/`aria2-next` (Windows/Linux/macOS) não estão neste repositório — baixe a release correspondente em https://github.com/AnInsomniacy/aria2-next/releases e coloque na raiz do pacote de teste, ao lado do `aria2c.exe` baseline.
+Cada asset vem acompanhado de um `.sha256` para verificação de integridade. As três plataformas são construídas e verificadas automaticamente pelo workflow [`bep52-phase4.yml`](.github/workflows/bep52-phase4.yml).
 
-O binário baseline `aria2c.exe` continua servindo só como referência de comparação de desempenho e não deve ser substituído.
+## Parâmetros padrão otimizados
 
-## Política de desenvolvimento
+- **Download direto**: `-a/--file-allocation` usa `trunc` por padrão (reserva o espaço em disco quase instantaneamente, sem o atraso do `prealloc`/`falloc` antes do primeiro byte). Baseline de regressão validada: [`tests/teste-direto-16-trunc-autosave.cmd`](tests/teste-direto-16-trunc-autosave.cmd) — **não deve ser alterado**, é a referência de desempenho.
+- **BitTorrent (v1, v2 e híbrido)**: o mesmo `--file-allocation` é automaticamente rebaixado para `none` quando o download é um torrent, já que peças são escritas fora de ordem em vários arquivos e alocação antecipada só atrasa o início. Um `--file-allocation` explícito passado pelo usuário sempre prevalece sobre esse ajuste automático.
+- Scripts de referência e diagnóstico de torrent (v1 e v1/v2 misto) estão em [`tests/`](tests/).
 
-Melhorias em cima do aria2-next (parâmetros de download direto, diagnóstico e streaming de torrent, etc.) acontecem em branch de desenvolvimento. Builds de teste podem ser executados automaticamente, mas o merge final em `main` só acontece após validação no Windows e regressões em Linux/macOS.
+## Desenvolvimento
+
+Melhorias acontecem em branch de desenvolvimento; o merge final na branch principal só ocorre após validação em Windows e regressões em Linux/macOS via CI.
+
+## Créditos
+
+Baseado no [aria2](https://github.com/aria2/aria2) original, de Tatsuhiro Tsujikawa e colaboradores.
