@@ -176,33 +176,45 @@ jobs:
         shell: msys2 {0}
         working-directory: upstream
         run: make -j2
+      - name: Install to staging prefix
+        shell: msys2 {0}
+        working-directory: upstream
+        run: |
+          # src/aria2c.exe is NOT the real binary: it's a small (tens of
+          # KB) libtool launcher stub that only works inside the build
+          # tree (alongside src/.libs/), which is why `ldd` on it shows
+          # nothing but base Windows DLLs (no libaria2, no third-party
+          # libs at all) and it fails to run once copied out on its own.
+          # `make install` makes libtool relink the real, final binary
+          # into place - the standard, well-tested way an autotools
+          # project like this one is meant to produce a distributable
+          # binary - so use that instead of guessing at .libs/ paths.
+          make install DESTDIR="$PWD/instroot"
+          find instroot -name 'aria2c.exe'
       - name: Verify binary
         shell: msys2 {0}
         working-directory: upstream
         run: |
-          test -s src/aria2c.exe
-          file src/aria2c.exe
+          bin=$(find instroot -name 'aria2c.exe' | head -1)
+          echo "BIN=$bin" >> "$GITHUB_ENV"
+          test -s "$bin"
+          file "$bin"
       - name: Bundle runtime DLLs
         shell: msys2 {0}
         working-directory: upstream
         run: |
-          # aria2c.exe is dynamically linked against libaria2 (built right
-          # here, in src/.libs/ - NOT under /mingw64) and the MSYS2/mingw64
-          # toolchain + third-party libs (gmp, libxml2, sqlite3, c-ares,
-          # libssh2, zlib, libssl/libcrypto via wintls, gcc/stdc++/
-          # winpthread runtime, ...). An earlier version of this step only
-          # bundled /mingw64-prefixed DLLs, which silently missed libaria2
-          # itself: the resulting artifact still couldn't launch outside
-          # this job (the smoke test below is exactly what caught it - a
-          # non-msys2 posix_spawn failure on the missing DLL surfaces here
-          # as exit code 127). Bundle every dependency ldd resolves except
-          # genuine base-Windows DLLs (under C:\Windows), regardless of
-          # which directory it was built or installed in, and fail loudly
-          # if ldd couldn't resolve one at all rather than shipping a
-          # silently-broken artifact.
+          # The installed aria2c.exe is dynamically linked against
+          # libaria2 plus the MSYS2/mingw64 toolchain + third-party libs
+          # (gmp, libxml2, sqlite3, c-ares, libssh2, zlib, libssl/
+          # libcrypto via wintls, gcc/stdc++/winpthread runtime, ...).
+          # None of those ship with a stock Windows install, so bundle
+          # every dependency ldd resolves except genuine base-Windows
+          # DLLs (under C:\Windows), and fail loudly if ldd couldn't
+          # resolve one at all rather than shipping a silently-broken
+          # artifact.
           mkdir -p dist
-          cp src/aria2c.exe dist/
-          raw="$(ldd src/aria2c.exe)"
+          cp "$BIN" dist/aria2c.exe
+          raw="$(ldd "$BIN")"
           echo "$raw"
           missing=$(echo "$raw" | grep -i 'not found' || true)
           if [ -n "$missing" ]; then
