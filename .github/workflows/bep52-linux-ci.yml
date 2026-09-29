@@ -1,0 +1,29 @@
+name: BEP52 Linux CI
+
+on:
+  push:
+    branches:
+      - chatgpt/bep52-phase4-windows-x64
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential autoconf automake autotools-dev autopoint libtool pkg-config \
+            libssl-dev libc-ares-dev zlib1g-dev libsqlite3-dev libssh2-1-dev \
+            libcppunit-dev gettext
+      - name: Configure
+        working-directory: upstream
+        run: |
+          autoreconf -i
+          ./configure --with-openssl --without-gnutls
+      - name: Build and test
+        working-directory: upstream
+        run: make -j2 check
