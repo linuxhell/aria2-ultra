@@ -6,6 +6,10 @@ on:
       - chatgpt/bep52-phase4-windows-x64
   workflow_dispatch:
 
+concurrency:
+  group: bep52-linux-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-22.04
