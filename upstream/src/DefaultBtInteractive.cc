@@ -114,7 +114,7 @@ DefaultBtInteractive::~DefaultBtInteractive() = default;
 void DefaultBtInteractive::initiateHandshake()
 {
   dispatcher_->addMessageToQueue(messageFactory_->createHandshakeMessage(
-      bittorrent::getInfoHash(downloadContext_),
+      bittorrent::getWireInfoHash(downloadContext_),
       bittorrent::getStaticPeerId()));
   dispatcher_->sendMessages();
 }
@@ -235,7 +235,7 @@ void DefaultBtInteractive::addAllowedFastMessageToQueue()
   if (peer_->isFastExtensionEnabled()) {
     auto fastSet = bittorrent::computeFastSet(
         peer_->getIPAddress(), downloadContext_->getNumPieces(),
-        bittorrent::getInfoHash(downloadContext_), allowedFastSetSize_);
+        bittorrent::getWireInfoHash(downloadContext_), allowedFastSetSize_);
     for (std::vector<size_t>::const_iterator itr = fastSet.begin(),
                                              eoi = fastSet.end();
          itr != eoi; ++itr) {
