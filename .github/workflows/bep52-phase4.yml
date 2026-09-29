@@ -26,7 +26,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y autoconf automake autopoint gettext libtool pkg-config \
             libcppunit-dev libssl-dev libxml2-dev libsqlite3-dev libc-ares-dev \
-            libssh2-1-dev zlib1g-dev libgcrypt20-dev libgmp-dev
+            libssh2-1-dev zlib1g-dev libgcrypt20-dev libgmp-dev \
+            liblzma-dev libidn2-0-dev libpsl-dev libnghttp2-dev libbrotli-dev libunistring-dev libzstd-dev
       - name: Bootstrap
         run: autoreconf -i
       - name: Configure
