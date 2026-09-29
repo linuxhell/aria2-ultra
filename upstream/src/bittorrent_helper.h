@@ -169,6 +169,27 @@ std::string getInfoHashString(DownloadContext* downloadContext);
 std::string
 getInfoHashString(const std::shared_ptr<DownloadContext>& downloadContext);
 
+// Returns the 20-byte swarm identifier used by the classic BitTorrent
+// peer-wire/tracker/MSE paths.  BEP 52 v2-only torrents use the first
+// 20 bytes of the SHA-256 info-hash; v1 and hybrid torrents keep using
+// their ordinary SHA-1 info-hash.
+const unsigned char* getWireInfoHash(DownloadContext* downloadContext);
+const unsigned char*
+getWireInfoHash(const std::shared_ptr<DownloadContext>& downloadContext);
+
+std::string getWireInfoHashString(DownloadContext* downloadContext);
+std::string
+getWireInfoHashString(const std::shared_ptr<DownloadContext>& downloadContext);
+
+// True only for pure BEP 52 torrents (not hybrids).
+bool isV2OnlyBt(DownloadContext* downloadContext);
+bool isV2OnlyBt(const std::shared_ptr<DownloadContext>& downloadContext);
+
+// Validates BEP 9 metadata against every info-hash known from the magnet.
+// For v2 this checks the full 32-byte SHA-256, never just the wire hash.
+bool validateMetadataInfoHash(DownloadContext* downloadContext,
+                              const std::string& metadata);
+
 // Returns 8bytes unsigned integer located at offset pos.  The integer
 // in msg is network byte order. This function converts it into host
 // byte order and returns it.
