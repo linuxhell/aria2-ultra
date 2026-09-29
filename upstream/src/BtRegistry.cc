@@ -32,7 +32,9 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#include "BtRegistry.h"\n\n#include <cstring>
+#include "BtRegistry.h"
+
+#include <cstring>
 #include "DlAbortEx.h"
 #include "DownloadContext.h"
 #include "PeerStorage.h"
