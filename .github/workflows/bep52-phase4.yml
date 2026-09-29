@@ -45,11 +45,16 @@ jobs:
           # librt) are assumed present on any glibc x86_64 Linux.
           mkdir -p dist
           cp src/aria2c dist/
-          ldd src/aria2c | awk '{print $3}' | grep -v '^$' | \
+          deps=$(ldd src/aria2c | awk '{print $3}' | grep -v '^$' | \
             grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux-x86-64)\.so' | \
-            sort -u | xargs -r -I{} cp -uL {} dist/
+            sort -u || true)
+          if [ -n "$deps" ]; then
+            echo "$deps" | xargs -I{} cp -uL {} dist/
+          fi
           chmod +x dist/aria2c
           ls -la dist/
+          echo "--- smoke test: dist/aria2c --version ---"
+          (cd dist && ./aria2c --version)
       - uses: actions/upload-artifact@v4
         with:
           name: aria2-ultra-bep52-linux-x64
@@ -117,6 +122,8 @@ jobs:
           otool -L dist/aria2c
           for f in dist/*.dylib; do [ -f "$f" ] && otool -L "$f"; done
           ls -la dist/
+          echo "--- smoke test: dist/aria2c --version ---"
+          (cd dist && ./aria2c --version)
       - uses: actions/upload-artifact@v4
         with:
           name: aria2-ultra-bep52-macos-x64
@@ -191,9 +198,13 @@ jobs:
           # exe so the uploaded artifact is self-contained.
           mkdir -p dist
           cp src/aria2c.exe dist/
-          ldd src/aria2c.exe | awk '{print $3}' | grep -i '^/mingw64/' | sort -u | \
-            xargs -r -I{} cp -u {} dist/
+          deps=$(ldd src/aria2c.exe | awk '{print $3}' | grep -i '^/mingw64/' | sort -u || true)
+          if [ -n "$deps" ]; then
+            echo "$deps" | xargs -I{} cp -u {} dist/
+          fi
           ls -la dist/
+          echo "--- smoke test: dist/aria2c.exe --version ---"
+          (cd dist && ./aria2c.exe --version)
       - uses: actions/upload-artifact@v4
         with:
           name: aria2-ultra-bep52-windows-x64
