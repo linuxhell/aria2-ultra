@@ -85,9 +85,28 @@ jobs:
         run: |
           test -s src/aria2c.exe
           file src/aria2c.exe
+      - name: Bundle runtime DLLs
+        shell: msys2 {0}
+        working-directory: upstream
+        run: |
+          # aria2c.exe is dynamically linked against libaria2 and the
+          # MSYS2/mingw64 toolchain + third-party libs (gmp, libxml2,
+          # sqlite3, c-ares, libssh2, zlib, libssl/libcrypto via wintls,
+          # gcc/stdc++/winpthread runtime, ...). Uploading the .exe alone
+          # produces a small (tens of KB) file that cannot run standalone
+          # outside this CI environment: Windows just fails to launch it
+          # (missing DLL) with no visible error in some launch contexts.
+          # Collect every dependency ldd resolves under /mingw64 (i.e.
+          # everything that isn't a base Windows system DLL) next to the
+          # exe so the uploaded artifact is self-contained.
+          mkdir -p dist
+          cp src/aria2c.exe dist/
+          ldd src/aria2c.exe | awk '{print $3}' | grep -i '^/mingw64/' | sort -u | \
+            xargs -r -I{} cp -u {} dist/
+          ls -la dist/
       - uses: actions/upload-artifact@v4
         with:
           name: aria2-ultra-bep52-windows-x64
-          path: upstream/src/aria2c.exe
+          path: upstream/dist
           if-no-files-found: error
           retention-days: 14
