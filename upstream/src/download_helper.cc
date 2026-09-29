@@ -195,11 +195,9 @@ createBtRequestGroup(const std::string& metaInfoUri,
   // may throw exception
   bittorrent::loadFromMemory(torrent, dctx, option, auxUris,
                              metaInfoUri.empty() ? "default" : metaInfoUri);
-  // BEP 52 parsing is available, but v2 piece verification and peer-wire
-  // support are not ready. Do not start an unverifiable v2-only download.
-  if (bittorrent::getTorrentAttrs(dctx)->infoHash.empty()) {
-    throw DL_ABORT_EX("BitTorrent v2-only downloads are not supported yet.");
-  }
+  // Pure BEP 52 torrents are allowed here: the peer-wire path uses the
+  // truncated SHA-256 swarm identifier and BtPieceMessage verifies completed
+  // pieces against the v2 Merkle tree before advertising them.
   for (auto& fe : dctx->getFileEntries()) {
     auto& uris = fe->getRemainingUris();
     std::shuffle(std::begin(uris), std::end(uris),
