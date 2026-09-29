@@ -390,6 +390,7 @@ void BittorrentHelperTest::testGetInfoHash()
   CPPUNIT_ASSERT_EQUAL(correctHash, bittorrent::getInfoHashString(dctx));
 }
 
+// BEP 52 uses a 20-byte truncated SHA-256 identifier on classic wire paths.
 void BittorrentHelperTest::testGetWireInfoHash()
 {
   auto v1 = std::make_shared<DownloadContext>();
