@@ -197,7 +197,6 @@ createBtRequestGroup(const std::string& metaInfoUri,
                              metaInfoUri.empty() ? "default" : metaInfoUri);
   // BEP 52 v2-only .torrent files are allowed here. Their piece layers are
   // validated while parsing and pieces are checked live against the Merkle tree.
-  // v2-only magnets remain guarded below until hash-layer acquisition is complete.
   for (auto& fe : dctx->getFileEntries()) {
     auto& uris = fe->getRemainingUris();
     std::shuffle(std::begin(uris), std::end(uris),
@@ -247,9 +246,11 @@ createBtMagnetRequestGroup(const std::string& magnetLink,
 
   bittorrent::loadMagnet(magnetLink, dctx);
   auto torrentAttrs = bittorrent::getTorrentAttrs(dctx);
-  if (torrentAttrs->infoHash.empty()) {
-    throw DL_ABORT_EX("BitTorrent v2-only magnets are not supported yet.");
-  }
+  // v2-only magnets (info-hash-less: no BEP 3 v1 infoHash) are allowed.
+  // Once the info dict arrives over ut_metadata, per-file piece layers
+  // (not part of the info dict) are fetched from peers via the BEP 52
+  // Hash Request/Hashes wire messages (see BtHashRequestFactory) before
+  // any of that file's pieces can verify.
 
   if (optionTemplate->getAsBool(PREF_BT_LOAD_SAVED_METADATA)) {
     // Try to read .torrent file saved by aria2 (see

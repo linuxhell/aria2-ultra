@@ -271,6 +271,13 @@ std::string computeV2MerkleRoot(const std::string& data, size_t leafCount);
 bool verifyV2PieceLayer(const std::string& layer,
                         const std::string& piecesRoot, size_t pieceLength);
 
+// Number of 32-byte hashes a file's BEP 52 piece layer has: the file's
+// piece count rounded up to the next power of two. A file with at most
+// one piece has no separate piece layer (its piecesRoot covers the whole
+// file directly, verified via verifyV2Piece with an empty layer), so this
+// returns 0 for it.
+size_t v2PieceLayerWidth(int64_t fileLength, int64_t pieceLength);
+
 // Verify a piece against a single-file root or a previously validated
 // piece layer. The caller supplies exactly the bytes of that piece.
 bool verifyV2Piece(const std::string& data, size_t pieceIndex,

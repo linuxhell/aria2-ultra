@@ -21,6 +21,7 @@
 #include "BtPortMessage.h"
 #include "BtExtendedMessage.h"
 #include "ExtensionMessage.h"
+#include "BtHashMessage.h"
 
 namespace aria2 {
 
@@ -146,6 +147,13 @@ public:
 
   virtual std::unique_ptr<BtExtendedMessage> createBtExtendedMessage(
       std::unique_ptr<ExtensionMessage> extmsg) CXX11_OVERRIDE
+  {
+    return nullptr;
+  }
+
+  virtual std::unique_ptr<BtHashRequestMessage>
+  createHashRequestMessage(const std::string& piecesRoot,
+                           uint32_t length) CXX11_OVERRIDE
   {
     return nullptr;
   }

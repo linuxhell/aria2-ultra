@@ -164,6 +164,20 @@ bool verifyV2PieceLayer(const std::string& layer,
   return merkleRoot(std::move(hashes)) == piecesRoot;
 }
 
+size_t v2PieceLayerWidth(int64_t fileLength, int64_t pieceLength)
+{
+  if (fileLength <= pieceLength || pieceLength <= 0) {
+    return 0;
+  }
+  size_t numPieces =
+      static_cast<size_t>((fileLength + pieceLength - 1) / pieceLength);
+  size_t width = 1;
+  while (width < numPieces) {
+    width *= 2;
+  }
+  return width;
+}
+
 bool verifyV2Piece(const std::string& data, size_t pieceIndex,
                    size_t pieceLength, const std::string& piecesRoot,
                    const std::string& layer)
@@ -283,7 +297,7 @@ void extractV2Metadata(TorrentAttribute* torrent, const Dict* root,
 {
   const Dict* tree = downcast<Dict>(info->get(C_FILE_TREE));
   const Dict* layers = downcast<Dict>(root->get(C_PIECE_LAYERS));
-  if (!tree || !layers || pieceLength < 16384 ||
+  if (!tree || pieceLength < 16384 ||
       (pieceLength & (pieceLength - 1)) != 0) {
     throw DL_ABORT_EX2("Invalid BEP 52 metadata.",
                        error_code::BITTORRENT_PARSE_ERROR);
@@ -294,24 +308,41 @@ void extractV2Metadata(TorrentAttribute* torrent, const Dict* root,
     throw DL_ABORT_EX2("Empty BEP 52 file tree.",
                        error_code::BITTORRENT_PARSE_ERROR);
   }
-  for (const auto& layer : *layers) {
-    const String* hashes = downcast<String>(layer.second.get());
-    if (layer.first.size() != 32 || !hashes || hashes->s().size() % 32) {
-      throw DL_ABORT_EX2("Invalid BEP 52 piece layer.",
-                         error_code::BITTORRENT_PARSE_ERROR);
-    }
-    torrent->pieceLayers.emplace(layer.first, hashes->s());
-  }
-  for (const auto& file : torrent->v2FileEntries) {
-    if (file.length > static_cast<int64_t>(pieceLength)) {
-      auto layer = torrent->pieceLayers.find(file.piecesRoot);
-      const uint64_t count = 1 + (static_cast<uint64_t>(file.length) - 1) /
-                                      pieceLength;
-      if (layer == torrent->pieceLayers.end() ||
-          layer->second.size() / 32 != count ||
-          !verifyV2PieceLayer(layer->second, file.piecesRoot, pieceLength)) {
-        throw DL_ABORT_EX2("Missing or invalid BEP 52 piece layer.",
+  if (layers) {
+    for (const auto& layer : *layers) {
+      const String* hashes = downcast<String>(layer.second.get());
+      if (layer.first.size() != 32 || !hashes || hashes->s().size() % 32) {
+        throw DL_ABORT_EX2("Invalid BEP 52 piece layer.",
                            error_code::BITTORRENT_PARSE_ERROR);
+      }
+      torrent->pieceLayers.emplace(layer.first, hashes->s());
+    }
+  }
+  // Metadata reconstructed from a magnet link (see metadata2Torrent) always
+  // emits the "piece layers" key for a v2 torrent, but with no entries: the
+  // real layer data is never known at that point (BEP 9 ut_metadata only
+  // ever carries the "info" dict). An actual .torrent file that omits or
+  // empties the key is treated the same way. Either way, when no layer
+  // entries were found at all, defer: piece layers are fetched live from
+  // peers via BEP 52 Hash Request/Hashes wire messages (see
+  // BtHashRequestFactory) and verified on arrival there. Doing so is not a
+  // weaker guarantee: piecesRoot itself comes from the file tree inside
+  // "info", which the info-hash/magnet link already commits to, so a piece
+  // layer fetched later is verified exactly as strictly as one bundled in
+  // the .torrent. Once at least one real layer entry is present, though,
+  // validate eagerly and reject a malformed .torrent outright.
+  if (!torrent->pieceLayers.empty()) {
+    for (const auto& file : torrent->v2FileEntries) {
+      if (file.length > static_cast<int64_t>(pieceLength)) {
+        auto layer = torrent->pieceLayers.find(file.piecesRoot);
+        const uint64_t count = 1 + (static_cast<uint64_t>(file.length) - 1) /
+                                        pieceLength;
+        if (layer == torrent->pieceLayers.end() ||
+            layer->second.size() / 32 != count ||
+            !verifyV2PieceLayer(layer->second, file.piecesRoot, pieceLength)) {
+          throw DL_ABORT_EX2("Missing or invalid BEP 52 piece layer.",
+                             error_code::BITTORRENT_PARSE_ERROR);
+        }
       }
     }
   }

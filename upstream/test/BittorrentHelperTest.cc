@@ -176,6 +176,21 @@ void BittorrentHelperTest::testV2Metadata()
   loadFromMemory(encoded, roundTrip, option_, "round-trip");
   CPPUNIT_ASSERT_EQUAL(util::toHex(attrs->infoHashV2),
                        util::toHex(getTorrentAttrs(roundTrip)->infoHashV2));
+
+  // What a v2-only magnet's metadata looks like right after ut_metadata
+  // completes: metadata2Torrent() always emits a "piece layers" key for a
+  // v2 torrent, but with no entries, since real layer data is never part
+  // of the info dict BEP 9 transfers. Loading it must not throw - piece
+  // layers are fetched later, live, over the BEP 52 Hash Request/Hashes
+  // wire messages (see BtHashRequestFactory) - and no file's layer should
+  // be considered known yet.
+  attrs->pieceLayers.clear();
+  const auto encodedNoLayers = metadata2Torrent(attrs->metadata, attrs);
+  auto magnetLike = std::make_shared<DownloadContext>();
+  loadFromMemory(encodedNoLayers, magnetLike, option_, "magnet-like");
+  auto magnetLikeAttrs = getTorrentAttrs(magnetLike);
+  CPPUNIT_ASSERT(magnetLikeAttrs->pieceLayers.empty());
+  CPPUNIT_ASSERT_EQUAL(size_t(1), magnetLikeAttrs->v2FileEntries.size());
 }
 
 void BittorrentHelperTest::testHybridMetadata()
@@ -215,11 +230,21 @@ void BittorrentHelperTest::testInvalidV2Metadata()
   CPPUNIT_ASSERT_THROW(parseMagnet("magnet:?xt=urn:btmh:1220abcd"),
                        RecoverableException);
   const auto original = readFile(A2_TEST_DIR "/fixtures/bep52/v2_only.torrent");
-  auto malformed = original;
-  auto pos = malformed.find("12:piece layers");
-  CPPUNIT_ASSERT(pos != std::string::npos);
-  malformed.replace(pos, 15, "12:piece laYers");
   auto ctx = std::make_shared<DownloadContext>();
+  // A "piece layers" dict that flatly does not name the file's piecesRoot
+  // (here: entirely absent) is not an error by itself - see the deferred
+  // "magnet-like" case in testV2Metadata - since a v2-only magnet's
+  // metadata never has real layer data at parse time either. But when a
+  // dict entry's root does not match any known file (corrupted here by
+  // flipping one byte right after the "d32:" root-key length prefix, so
+  // bencode framing stays valid), that entry can never be used to verify
+  // this file's pieces and must still be rejected outright rather than
+  // silently ignored.
+  auto malformed = original;
+  auto pos = malformed.find("12:piece layersd32:");
+  CPPUNIT_ASSERT(pos != std::string::npos);
+  auto rootPos = pos + std::string("12:piece layersd32:").size();
+  malformed[rootPos] = static_cast<char>(malformed[rootPos] ^ 0xff);
   CPPUNIT_ASSERT_THROW(loadFromMemory(malformed, ctx, option_, "invalid"),
                        RecoverableException);
   malformed = original;

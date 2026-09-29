@@ -2,9 +2,15 @@
 
 #include <cstring>
 #include "bittorrent_helper.h"
+#include "BtHashRequestTracker.h"
 #include "BtMessageDispatcher.h"
+#include "DownloadContext.h"
+#include "TorrentAttribute.h"
+#include "Logger.h"
+#include "LogFactory.h"
 #include "fmt.h"
 #include "DlAbortEx.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -92,8 +98,34 @@ std::string BtHashRequestMessage::toString() const
 
 void BtHashRequestMessage::doReceivedAction()
 {
-  // Conservative first implementation: acknowledge every syntactically valid
-  // request with the mandatory protocol-level reject rather than disconnecting.
+  // Serve the piece layer if we have it fully cached and the request asks
+  // for exactly that whole layer in one shot (base layer 0, no additional
+  // proof layers): this is the only shape aria2 itself ever sends, and the
+  // only one we can answer without re-deriving partial Merkle proofs.
+  const TorrentAttribute* torrentAttrs =
+      downloadContext_ ? bittorrent::getTorrentAttrs(downloadContext_)
+                       : nullptr;
+  std::string hashes;
+  if (torrentAttrs && baseLayer_ == 0 && proofLayers_ == 0 && index_ == 0) {
+    auto it = torrentAttrs->pieceLayers.find(piecesRoot_);
+    if (it != torrentAttrs->pieceLayers.end() &&
+        it->second.size() == static_cast<size_t>(length_) * 32) {
+      hashes = it->second;
+    }
+  }
+  if (!hashes.empty()) {
+    auto reply = make_unique<BtHashesMessage>(piecesRoot_, baseLayer_, index_,
+                                              length_, proofLayers_, hashes);
+    reply->setCuid(getCuid());
+    reply->setPeer(getPeer());
+    reply->setPieceStorage(getPieceStorage());
+    reply->setBtMessageDispatcher(getBtMessageDispatcher());
+    reply->setBtMessageFactory(getBtMessageFactory());
+    reply->setBtRequestFactory(getBtRequestFactory());
+    reply->setPeerConnection(getPeerConnection());
+    getBtMessageDispatcher()->addMessageToQueue(std::move(reply));
+    return;
+  }
   auto reject = make_unique<BtHashRejectMessage>(
       piecesRoot_, baseLayer_, index_, length_, proofLayers_);
   reject->setCuid(getCuid());
@@ -138,6 +170,36 @@ std::string BtHashesMessage::toString() const
              static_cast<unsigned long>(hashes_.size() / 32));
 }
 
+void BtHashesMessage::doReceivedAction()
+{
+  if (hashRequestTracker_) {
+    hashRequestTracker_->remove(piecesRoot_);
+  }
+  // Only the "whole layer in one message" shape aria2 itself requests is
+  // understood here; anything else (partial layer, non-zero base layer) is
+  // silently ignored rather than treated as a protocol violation, since a
+  // well-behaved peer might still answer other clients' more elaborate
+  // requests this way on the same connection.
+  if (baseLayer_ != 0 || index_ != 0 || !downloadContext_) {
+    return;
+  }
+  if (!bittorrent::verifyV2PieceLayer(hashes_, piecesRoot_,
+                                      downloadContext_->getPieceLength())) {
+    A2_LOG_INFO(fmt("Discarding BEP52 hashes reply for piecesRoot=%s: "
+                    "does not verify against the root.",
+                    util::toHex(piecesRoot_).c_str()));
+    return;
+  }
+  TorrentAttribute* torrentAttrs = bittorrent::getTorrentAttrs(downloadContext_);
+  if (torrentAttrs->pieceLayers.find(piecesRoot_) ==
+      torrentAttrs->pieceLayers.end()) {
+    torrentAttrs->pieceLayers.emplace(piecesRoot_, hashes_);
+    A2_LOG_INFO(fmt("Got BEP52 piece layer for piecesRoot=%s (%lu hashes).",
+                    util::toHex(piecesRoot_).c_str(),
+                    static_cast<unsigned long>(hashes_.size() / 32)));
+  }
+}
+
 BtHashRejectMessage::BtHashRejectMessage(const std::string& root,
                                          uint32_t baseLayer, uint32_t index,
                                          uint32_t length,
@@ -165,6 +227,14 @@ std::string BtHashRejectMessage::toString() const
 {
   return fmt("%s base=%u index=%u length=%u proof=%u", NAME, baseLayer_, index_,
              length_, proofLayers_);
+}
+
+void BtHashRejectMessage::doReceivedAction()
+{
+  if (hashRequestTracker_) {
+    hashRequestTracker_->remove(piecesRoot_);
+    hashRequestTracker_->markRejected(piecesRoot_);
+  }
 }
 
 } // namespace aria2

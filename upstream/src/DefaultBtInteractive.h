@@ -62,6 +62,8 @@ class DHTNode;
 class RequestGroupMan;
 class UTMetadataRequestFactory;
 class UTMetadataRequestTracker;
+class BtHashRequestFactory;
+class BtHashRequestTracker;
 
 class FloodingStat {
 private:
@@ -119,6 +121,8 @@ private:
   std::unique_ptr<ExtensionMessageRegistry> extensionMessageRegistry_;
   std::unique_ptr<UTMetadataRequestFactory> utMetadataRequestFactory_;
   std::unique_ptr<UTMetadataRequestTracker> utMetadataRequestTracker_;
+  std::unique_ptr<BtHashRequestFactory> hashRequestFactory_;
+  std::unique_ptr<BtHashRequestTracker> hashRequestTracker_;
 
   bool metadataGetMode_;
 
@@ -155,6 +159,7 @@ private:
   void decideInterest();
   void fillPiece(size_t maxMissingBlock);
   void addRequests();
+  void addHashRequests();
   void detectMessageFlooding();
   void checkActiveInteraction();
   void addPeerExchangeMessage();
@@ -236,6 +241,10 @@ public:
 
   void setUTMetadataRequestFactory(
       std::unique_ptr<UTMetadataRequestFactory> factory);
+
+  void setHashRequestTracker(std::unique_ptr<BtHashRequestTracker> tracker);
+
+  void setHashRequestFactory(std::unique_ptr<BtHashRequestFactory> factory);
 
   void enableMetadataGetMode() { metadataGetMode_ = true; }
 

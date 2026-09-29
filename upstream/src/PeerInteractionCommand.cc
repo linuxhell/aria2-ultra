@@ -76,6 +76,8 @@
 #include "bittorrent_helper.h"
 #include "UTMetadataRequestFactory.h"
 #include "UTMetadataRequestTracker.h"
+#include "BtHashRequestFactory.h"
+#include "BtHashRequestTracker.h"
 #include "BtRegistry.h"
 
 namespace aria2 {
@@ -270,6 +272,22 @@ PeerInteractionCommand::PeerInteractionCommand(
         std::move(utMetadataRequestFactory));
     btInteractive->setUTMetadataRequestTracker(
         std::move(utMetadataRequestTracker));
+  }
+  else {
+    // BEP 52: only meaningful once real metadata (the info dict) is known,
+    // i.e. not during the ut_metadata fetch phase above. A no-op for
+    // v1-only downloads (see BtHashRequestFactory::create).
+    auto hashRequestTracker = make_unique<BtHashRequestTracker>();
+    auto hashRequestFactory = make_unique<BtHashRequestFactory>();
+    hashRequestFactory->setDownloadContext(
+        requestGroup_->getDownloadContext().get());
+    hashRequestFactory->setBtMessageFactory(factoryPtr);
+    hashRequestFactory->setHashRequestTracker(hashRequestTracker.get());
+
+    factoryPtr->setHashRequestTracker(hashRequestTracker.get());
+
+    btInteractive->setHashRequestFactory(std::move(hashRequestFactory));
+    btInteractive->setHashRequestTracker(std::move(hashRequestTracker));
   }
 
   btInteractive->setTcpPort(e->getBtRegistry()->getTcpPort());

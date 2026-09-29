@@ -57,6 +57,7 @@
 #include "BtAllowedFastMessage.h"
 #include "BtHandshakeMessage.h"
 #include "BtHashMessage.h"
+#include "BtHashRequestTracker.h"
 #include "BtHandshakeMessageValidator.h"
 #include "BtExtendedMessage.h"
 #include "ExtensionMessage.h"
@@ -85,7 +86,8 @@ DefaultBtMessageFactory::DefaultBtMessageFactory()
       routingTable_{nullptr},
       taskQueue_{nullptr},
       taskFactory_{nullptr},
-      metadataGetMode_(false)
+      metadataGetMode_(false),
+      hashRequestTracker_{nullptr}
 {
 }
 
@@ -216,15 +218,25 @@ DefaultBtMessageFactory::createBtMessage(const unsigned char* data,
       msg = std::move(m);
       break;
     }
-    case BtHashRequestMessage::ID:
-      msg = BtHashRequestMessage::create(data, dataLength);
+    case BtHashRequestMessage::ID: {
+      auto m = BtHashRequestMessage::create(data, dataLength);
+      m->setDownloadContext(downloadContext_);
+      msg = std::move(m);
       break;
-    case BtHashesMessage::ID:
-      msg = BtHashesMessage::create(data, dataLength);
+    }
+    case BtHashesMessage::ID: {
+      auto m = BtHashesMessage::create(data, dataLength);
+      m->setDownloadContext(downloadContext_);
+      m->setHashRequestTracker(hashRequestTracker_);
+      msg = std::move(m);
       break;
-    case BtHashRejectMessage::ID:
-      msg = BtHashRejectMessage::create(data, dataLength);
+    }
+    case BtHashRejectMessage::ID: {
+      auto m = BtHashRejectMessage::create(data, dataLength);
+      m->setHashRequestTracker(hashRequestTracker_);
+      msg = std::move(m);
       break;
+    }
     case BtExtendedMessage::ID: {
       if (peer_->isExtendedMessagingEnabled()) {
         msg = BtExtendedMessage::create(extensionMessageFactory_, peer_, data,
@@ -410,6 +422,16 @@ DefaultBtMessageFactory::createBtExtendedMessage(
     std::unique_ptr<ExtensionMessage> exmsg)
 {
   auto msg = make_unique<BtExtendedMessage>(std::move(exmsg));
+  setCommonProperty(msg.get());
+  return msg;
+}
+
+std::unique_ptr<BtHashRequestMessage>
+DefaultBtMessageFactory::createHashRequestMessage(const std::string& piecesRoot,
+                                                  uint32_t length)
+{
+  auto msg =
+      make_unique<BtHashRequestMessage>(piecesRoot, 0, 0, length, 0);
   setCommonProperty(msg.get());
   return msg;
 }
