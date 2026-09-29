@@ -254,18 +254,138 @@ v2-only real continua bloqueado; quando a Fase 4 destravar isso, o mesmo
 `verifyV2PieceByGlobalIndex` pode ser reaproveitado ali.
 
 ### Fase 4 — Protocolo peer-wire (BEP 52)
-Objetivo: aria2-ultra fala v2 de verdade com outros peers.
 
-- [ ] Handshake: torrents v2-only anunciam um info-hash diferente do v1 no
-  handshake padrão (regra exata do BEP 52 — conferir spec); híbrido
-  precisa responder corretamente pros dois tipos de peer.
-- [ ] Novas mensagens de extensão (BEP 10 extended protocol): `hash
-  request`, `hashes`, `hash reject` — pedido/resposta de camadas da árvore
-  de merkle entre peers. Implementar como novas classes `Bt*Message`
-  seguindo o padrão das existentes (`BtExtendedMessage.*` como referência).
-- [ ] Metadata exchange (`ut_metadata`, BEP 9) para magnet v2/híbrido:
-  entregar o `info` dict completo (incluindo `file tree` e `piece
-  layers`) via peers, não só via `.torrent` local.
+> **Handoff para o ChatGPT.** O Claude mapeou o código-alvo e a spec de
+> memória, mas **não conseguiu validar nada disto contra um peer/tracker
+> real** — o sandbox onde ele rodou bloqueia toda rede BitTorrent (DHT,
+> tracker, conexões a peers ficam sem resposta; já confirmado nas Fases
+> anteriores). Diferente das Fases 1-3 (funções puras, testáveis com
+> vetores conhecidos e fixtures reais, sem rede), a Fase 4 é protocolo de
+> rede de verdade: só compila e passa teste unitário isolado não prova que
+> interopera com qBittorrent/libtorrent/Transmission de verdade. **Use sua
+> rede pra baixar torrents v2/híbridos reais e testar contra swarms de
+> verdade antes de considerar isto pronto.** Releia a recomendação #5 do
+> topo deste documento (seguir a BEP 52 ao pé da letra, com vetores reais)
+> — ela vale em dobro aqui.
+
+Objetivo: aria2-ultra fala v2 de verdade com outros peers. Sub-fases, na
+ordem que fazem sentido (cada uma só faz sentido com a anterior pronta):
+
+#### Fase 4.1 — Hash de 20 bytes correto no fio (handshake, tracker, DHT, LPD, BtRegistry)
+
+O BEP 3 usa sempre SHA-1 (20 bytes) como identificador no protocolo
+(handshake, tracker HTTP/UDP, DHT, LPD). O BEP 52 define, na seção de
+"Transitional guidelines": torrents **híbridos** continuam anunciando o
+hash v1 (SHA-1) de sempre — mantém compatibilidade total com swarms v1 e é
+exatamente o que o aria2-ultra já faz hoje (nada a mudar aí). Torrents
+**v2-only** não têm hash v1 — nesse caso o BEP 52 diz para usar **os
+primeiros 20 bytes do hash v2 (SHA-256) truncado** como o identificador de
+20 bytes em todo lugar que o protocolo clássico espera 20 bytes.
+**Confirme esse detalhe lendo o texto oficial da BEP 52
+(http://www.bittorrent.org/beps/bep_0052.html) antes de implementar** — o
+Claude está descrevendo de memória, não seria a primeira vez que um
+detalhe de truncamento sai errado.
+
+O código atual (`bittorrent::getInfoHash()` em `bittorrent_helper.cc`)
+retorna `TorrentAttribute::infoHash`, que **fica vazio** para torrents
+v2-only (é assim que `isV2OnlyBt()` da Fase 3 e o guard da Fase 1 em
+`download_helper.cc` detectam "isto é v2-only"). Ou seja, não dá pra só
+preencher `infoHash` com o hash truncado — quebraria essa detecção. A
+abordagem recomendada: adicionar um novo campo em `TorrentAttribute`
+(ex.: `wireInfoHash`, preenchido em `processRootDictionary()`/`parseMagnet()`
+como `infoHash` se não vazio, senão os primeiros 20 bytes de `infoHashV2`)
+e uma nova função `bittorrent::getWireInfoHash()`/`getWireInfoHashString()`
+ao lado das existentes `getInfoHash()`/`getInfoHashString()`, **sem
+alterar o comportamento delas** (ainda usadas para outras coisas, ex.
+`RequestGroup::createDownloadResult()` provavelmente quer continuar
+reportando o hash v1 "de verdade" quando existir).
+
+Levantamento feito (`grep -rln "bittorrent::getInfoHash\b"`) — arquivos
+que hoje chamam `getInfoHash()`/`getInfoHashString()` e que, para
+funcionar com download v2-only, precisam trocar para a variante "wire"
+(revise cada um, nem todo uso é necessariamente sobre o fio — por exemplo
+`DefaultBtProgressInfoFile` pode ser sobre o arquivo de sessão local, não
+o protocolo; confirme call a call):
+
+- `BtSetup.cc`
+- `DHTPeerLookupTask.cc` — DHT `get_peers`/`announce_peer`
+- `DefaultBtAnnounce.cc` — tracker HTTP/UDP (`info_hash` do announce)
+- `DefaultBtInteractive.cc` — `initiateHandshake()` (linha ~116, já
+  identificada) e a validação do handshake recebido
+- `DefaultBtMessageFactory.cc`
+- `DefaultBtMessageReceiver.cc`
+- `DefaultBtProgressInfoFile.cc`
+- `InitiatorMSEHandshakeCommand.cc` — encriptação MSE também deriva
+  material de chave do info-hash; conferir se precisa do wire-hash aqui
+  também
+- `MSEHandshake.cc`
+- `UTMetadataDataExtensionMessage.cc`
+- `bittorrent_helper.cc` (as próprias `getInfoHash`/`getInfoHashString`,
+  mais `BtRegistry` — conferir como as entradas são chaveadas por
+  info-hash para reconhecer conexões entrantes de peers v2-only)
+
+Nota sobre DHT: o BEP 52 tem uma seção própria descrevendo como nós DHT
+"v2" preferencialmente usam o hash de 32 bytes completo (não o truncado)
+num namespace separado — é mais correto que só truncar feito no
+tracker/handshake. Ler a spec e decidir a abordagem antes de implementar;
+não adivinhar.
+
+Depois disso, o guard em `download_helper.cc`
+(`"BitTorrent v2-only downloads are not supported yet."`) pode ser
+suavizado apenas para permitir handshake/conexão — mas mantenha um erro
+claro se o download tentar avançar além disso antes da Fase 4.2 estar
+pronta, para não silenciosamente tentar baixar peça sem saber verificá-la
+pelo fio.
+
+#### Fase 4.2 — Mensagens novas do BEP 52 (`hash request`/`hashes`/`hash reject`)
+
+Necessárias para: (a) pedir a um peer as camadas da árvore de merkle que
+faltam (um peer pode ter só o `piecesRoot` de cada arquivo via metadata,
+sem as camadas internas completas) e (b) verificar peças recebidas usando
+`bittorrent::verifyV2PieceByGlobalIndex()` (Fase 3, já pronto e testado —
+reaproveitar, não duplicar).
+
+**Confirme IDs de mensagem e ordem/tamanho exato dos campos direto no
+texto da BEP 52** antes de codar — o Claude lembra da forma geral de
+memória, mas não confia nisso o suficiente pra você implementar sem
+checar:
+
+- **Hash Request**: identifica um arquivo pelo `piecesRoot` (32 bytes,
+  não pelo info-hash do torrent) + parâmetros indicando qual faixa da
+  árvore de merkle está sendo pedida (algo como: camada base, índice
+  inicial nessa camada, quantidade de hashes, quantidade de camadas de
+  prova para validar contra a raiz).
+- **Hashes**: resposta com os mesmos campos de identificação do pedido,
+  seguidos dos hashes de 32 bytes propriamente ditos (os pedidos + os de
+  prova).
+- **Hash Reject**: mesmos campos de identificação do pedido, sem dados,
+  indicando recusa.
+
+Implementar como novas classes `Bt*Message` seguindo o padrão das
+existentes (`BtPieceMessage.*`/`BtRequestMessage.*` como referência de
+mensagens core do protocolo, não `BtExtendedMessage.*` — **confirme na
+spec se estas são mensagens do protocolo base BitTorrent com ID próprio,
+ou mensagens de extensão BEP 10**; o Claude acredita que são ID próprio no
+protocolo base, mas isso precisa ser confirmado, não assumido). Registrar
+em `DefaultBtMessageFactory`/`DefaultExtensionMessageFactory` conforme o
+caso, com testes unitários no padrão dos `Bt*MessageTest.cc` existentes
+(serialização/parsing round-trip, casos inválidos) **e** validação real
+contra pelo menos um peer/cliente de referência antes de dar como pronto.
+
+#### Fase 4.3 — Metadata exchange (`ut_metadata`, BEP 9) para magnet v2/híbrido
+
+Entregar o `info` dict completo (incluindo `file tree` e `piece layers`)
+via peers para quem só tem o magnet, não o `.torrent` local. Ver
+`UTMetadataDataExtensionMessage.cc`/`UTMetadataRequestExtensionMessage.cc`
+existentes (fluxo v1) como referência de como isso já funciona para BEP 9
+clássico; o desafio aqui é que o `info` dict de um torrent v2 é maior
+(inclui `file tree`+`piece layers`), então pode passar do limite de um
+único bloco de metadata do BEP 9 — conferir como fragmentação já é tratada
+no código v1 (`UTMetadataRequestFactory`/`UTMetadataRequestTracker`) e
+reaproveitar o mesmo mecanismo.
+
+Só depois de 4.1+4.2+4.3 prontos e **validados contra peers reais** o
+guard de `download_helper.cc` pode ser removido de vez para v2-only.
 
 ### Fase 5 — Tracker e DHT
 - [ ] Anúncio a tracker HTTP/UDP com o info-hash certo (v1 e/ou v2,
@@ -299,13 +419,25 @@ Objetivo: aria2-ultra fala v2 de verdade com outros peers.
   build/testes validados de forma independente em Linux (autotools) antes
   de comitar. Download v2-only real ainda bloqueado (guarda da Fase 1) —
   falta o protocolo com peers (Fase 4) pra ter dado ao vivo pra verificar.
-- Fases 4-6: não iniciadas.
+- Fase 4: **handoff para o ChatGPT** (ver seção da Fase 4 acima para o
+  levantamento completo). O Claude mapeou os 11 arquivos que usam
+  `bittorrent::getInfoHash()` e precisam de uma variante "wire hash"
+  (truncamento v2 de 20 bytes) para v2-only, descreveu a forma das
+  mensagens novas do BEP 52 de memória, mas **não conseguiu validar nada
+  disso contra peer/tracker real** (rede BitTorrent bloqueada no sandbox
+  dele). Não commitado nenhum código desta fase ainda — é trabalho novo
+  para o ChatGPT, que tem acesso a rede real para testar interoperabilidade
+  de verdade contra qBittorrent/libtorrent/Transmission.
+- Fases 5-6: não iniciadas.
 
 ## Próximo passo concreto
 
-Implementar a Fase 4: protocolo peer-wire do BEP 52 (handshake v2-only,
-mensagens `hash request`/`hashes`/`hash reject`, troca de metadados v2 via
-`ut_metadata`). É a fase que efetivamente destrava o download real de
-torrents v2-only — até lá, o guard em `download_helper.cc` deve continuar
-recusando essas transferências. `verifyV2PieceByGlobalIndex()` (Fase 3) já
-está pronto para ser reaproveitado ali quando peças chegarem pela rede.
+Implementar a Fase 4.1 primeiro (hash de 20 bytes correto no fio — é
+pré-requisito de tudo o resto e é a parte mais fácil de validar, já que só
+precisa completar um handshake TCP com um peer real, sem trocar peça
+ainda), depois 4.2 (mensagens novas) e 4.3 (metadata exchange), sempre
+testando contra peers/trackers reais antes de considerar cada sub-fase
+pronta. Só depois disso o guard em `download_helper.cc` pode ser removido
+para v2-only. `verifyV2PieceByGlobalIndex()` (Fase 3) já está pronto e
+testado para ser reaproveitado quando peças chegarem pela rede — não
+reimplementar a verificação, só chamar.
