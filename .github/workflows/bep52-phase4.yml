@@ -1,0 +1,77 @@
+name: BEP52 phase 4 CI
+
+on:
+  pull_request:
+    branches: [claude/upbeat-cannon-7ovk29]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-tests:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: upstream
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake autopoint gettext libtool pkg-config \
+            libcppunit-dev libssl-dev libxml2-dev libsqlite3-dev libc-ares-dev \
+            libssh2-1-dev zlib1g-dev libgcrypt20-dev libgmp-dev
+      - name: Bootstrap
+        run: autoreconf -i
+      - name: Configure
+        run: ./configure
+      - name: Build and test
+        run: make -j2 check
+
+  windows-x64:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            autoconf
+            automake
+            libtool
+            make
+            gettext-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gmp
+            mingw-w64-x86_64-libxml2
+            mingw-w64-x86_64-expat
+            mingw-w64-x86_64-sqlite3
+            mingw-w64-x86_64-c-ares
+            mingw-w64-x86_64-libssh2
+            mingw-w64-x86_64-zlib
+      - name: Bootstrap and configure
+        shell: msys2 {0}
+        working-directory: upstream
+        run: |
+          autoreconf -i
+          ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl
+      - name: Build
+        shell: msys2 {0}
+        working-directory: upstream
+        run: make -j2
+      - name: Verify binary
+        shell: msys2 {0}
+        working-directory: upstream
+        run: |
+          test -s src/aria2c.exe
+          file src/aria2c.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aria2-ultra-bep52-windows-x64
+          path: upstream/src/aria2c.exe
+          if-no-files-found: error
+          retention-days: 14
