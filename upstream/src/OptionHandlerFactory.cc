@@ -1590,8 +1590,14 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    // Default on for both v1 and v2 torrents: fetch the first/last pieces of
+    // each file early so media players can open the file for preview before
+    // the whole torrent finishes downloading. PriorityPieceSelector (see
+    // RequestGroup.cc) is shared between the v1 and v2 code paths, so this
+    // single default covers both.
     OptionHandler* op(new PrioritizePieceOptionHandler(
-        PREF_BT_PRIORITIZE_PIECE, TEXT_BT_PRIORITIZE_PIECE));
+        PREF_BT_PRIORITIZE_PIECE, TEXT_BT_PRIORITIZE_PIECE,
+        "head=10M,tail=1M"));
     op->addTag(TAG_BITTORRENT);
     op->setInitialOption(true);
     op->setChangeGlobalOption(true);
