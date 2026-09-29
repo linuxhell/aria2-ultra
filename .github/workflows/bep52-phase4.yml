@@ -104,12 +104,12 @@ jobs:
           # dynamic linking against the system's own libSystem/frameworks
           # - that part is unavoidable and expected on this platform, see
           # the "Verify" step below). For our own third-party deps
-          # (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gmp, gcrypt) we
+          # (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gmp, gcrypt, gettext) we
           # still want the .a archives Homebrew ships alongside each
           # .dylib, but a plain -lfoo always prefers the .dylib when both
           # exist. Hide the .dylib symlinks so configure/make have no
           # choice but to link the static archive instead.
-          for formula in openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt; do
+          for formula in openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt gettext; do
             prefix="$(brew --prefix "$formula")"
             find "$prefix/lib" -maxdepth 1 -name '*.dylib' -exec mv {} {}.disabled \;
           done
