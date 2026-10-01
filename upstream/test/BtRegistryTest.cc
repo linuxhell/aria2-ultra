@@ -66,19 +66,24 @@ void BtRegistryTest::testGetDownloadContext_infoHash()
   BtRegistry btRegistry;
   addTwoDownloadContext(btRegistry);
   {
+    // getDownloadContext(infoHash) now looks up by the 20-byte wire hash
+    // (see bittorrent::getWireInfoHash): use real INFO_HASH_LENGTH-sized
+    // hashes here, not the old placeholder shorthand.
     auto attrs1 = make_unique<TorrentAttribute>();
-    attrs1->infoHash = "hash1";
+    attrs1->infoHash = std::string(20, '\x01');
     auto attrs2 = make_unique<TorrentAttribute>();
-    attrs2->infoHash = "hash2";
+    attrs2->infoHash = std::string(20, '\x02');
     btRegistry.getDownloadContext(1)->setAttribute(CTX_ATTR_BT,
                                                    std::move(attrs1));
     btRegistry.getDownloadContext(2)->setAttribute(CTX_ATTR_BT,
                                                    std::move(attrs2));
   }
-  CPPUNIT_ASSERT(btRegistry.getDownloadContext("hash1"));
-  CPPUNIT_ASSERT(btRegistry.getDownloadContext("hash1").get() ==
+  const std::string hash1(20, '\x01');
+  const std::string notExists(20, '\xff');
+  CPPUNIT_ASSERT(btRegistry.getDownloadContext(hash1));
+  CPPUNIT_ASSERT(btRegistry.getDownloadContext(hash1).get() ==
                  btRegistry.getDownloadContext(1).get());
-  CPPUNIT_ASSERT(!btRegistry.getDownloadContext("not exists"));
+  CPPUNIT_ASSERT(!btRegistry.getDownloadContext(notExists));
 }
 
 void BtRegistryTest::testGetAllDownloadContext()

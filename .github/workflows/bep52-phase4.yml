@@ -1,9 +1,16 @@
 name: BEP52 phase 4 CI
+# upstream/m4 restored from aria2/aria2@9e72735 for reproducible autoreconf
 
 on:
+  push:
+    branches: [claude/upbeat-cannon-7ovk29]
   pull_request:
     branches: [claude/upbeat-cannon-7ovk29]
   workflow_dispatch:
+
+concurrency:
+  group: bep52-phase4-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,17 +28,157 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y autoconf automake autopoint gettext libtool pkg-config \
             libcppunit-dev libssl-dev libxml2-dev libsqlite3-dev libc-ares-dev \
-            libssh2-1-dev zlib1g-dev libgcrypt20-dev libgmp-dev
+            libssh2-1-dev zlib1g-dev libgcrypt20-dev libgmp-dev \
+            liblzma-dev libidn2-0-dev libpsl-dev libnghttp2-dev libbrotli-dev libunistring-dev libzstd-dev
+          # Ubuntu's libc-ares-dev (CMake-built) ships its static archive
+          # as libcares_static.a instead of the conventional libcares.a,
+          # so a plain -lcares under -all-static can't find it. Symlink
+          # the name the linker actually looks for.
+          libdir="$(dpkg -L libc-ares-dev | grep -m1 '/libcares_static\.a$' | xargs dirname)"
+          sudo ln -sf "$libdir/libcares_static.a" "$libdir/libcares.a"
       - name: Bootstrap
         run: autoreconf -i
       - name: Configure
-        run: ./configure
+        run: |
+          # aria2's own build system has a dedicated static-build switch,
+          # ARIA2_STATIC=yes (see README.rst "To build statically linked
+          # aria2"): it makes pkg-config emit static linking flags AND
+          # adds libtool's -all-static to the link line, which is what
+          # actually forces every third-party dependency (OpenSSL,
+          # libxml2, sqlite3, c-ares, libssh2, gcrypt, gmp, ...) to link
+          # in statically - hand-rolling this via a plain LDFLAGS=-static
+          # + --disable-shared/--enable-static (tried first) silently
+          # produced a fully dynamic binary instead, because LDFLAGS set
+          # at configure time never made it onto the final aria2c link
+          # command in this Makefile. This also affects the `make check`
+          # test binary built below, which needs cppunit available as a
+          # static .a too (libcppunit-dev ships one on Ubuntu).
+          ./configure ARIA2_STATIC=yes
       - name: Build and test
         run: make -j2 check
+      - name: Verify fully static (no loose .so files)
+        run: |
+          # The whole point of the static build above is a single
+          # standalone binary with nothing next to it. Verify that here
+          # instead of silently bundling shared libs to paper over a link
+          # that went dynamic: if ldd reports this as a dynamic
+          # executable with any non-base-system dependency, fail the
+          # build loudly rather than shipping a broken/partial artifact.
+          mkdir -p dist
+          cp src/aria2c dist/
+          raw="$(ldd dist/aria2c 2>&1 || true)"
+          echo "$raw"
+          if ! echo "$raw" | grep -qi "not a dynamic executable"; then
+            extra=$(echo "$raw" | awk '{print $3}' | grep -v '^$' | \
+              grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux-x86-64)\.so' | sort -u || true)
+            if [ -n "$extra" ]; then
+              echo "ERROR: aria2c is not fully static - found external shared library dependencies:"
+              echo "$extra"
+              exit 1
+            fi
+          fi
+          chmod +x dist/aria2c
+          ls -la dist/
+          echo "--- smoke test: dist/aria2c --version ---"
+          (cd dist && ./aria2c --version)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aria2-ultra-bep52-linux-x64
+          path: upstream/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-x64:
+    runs-on: macos-15-intel
+    defaults:
+      run:
+        working-directory: upstream
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool pkg-config gettext \
+            openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt
+          echo "$(brew --prefix gettext)/bin" >> "$GITHUB_PATH"
+      - name: Force static linking of Homebrew libs
+        run: |
+          # macOS/ld64 has no real -static mode (Apple only supports
+          # dynamic linking against the system's own libSystem/frameworks
+          # - that part is unavoidable and expected on this platform, see
+          # the "Verify" step below). For our own third-party deps
+          # (OpenSSL, libxml2, sqlite3, c-ares, libssh2, gmp, gcrypt, gettext) we
+          # still want the .a archives Homebrew ships alongside each
+          # .dylib, but a plain -lfoo always prefers the .dylib when both
+          # exist. Hide the .dylib symlinks so configure/make have no
+          # choice but to link the static archive instead.
+          for formula in openssl@3 libxml2 sqlite c-ares libssh2 gmp libgcrypt gettext; do
+            prefix="$(brew --prefix "$formula")"
+            find "$prefix/lib" -maxdepth 1 -name '*.dylib' -exec mv {} {}.disabled \;
+          done
+      - name: Bootstrap
+        run: autoreconf -i
+      - name: Configure
+        run: |
+          # ARIA2_STATIC=yes is aria2's own static-build switch (see the
+          # Linux job for why this replaces a hand-rolled
+          # PKG_CONFIG=--static + LDFLAGS approach): it makes pkg-config
+          # emit static flags AND adds libtool's -all-static to the link
+          # line. -all-static is honored per-platform by libtool itself,
+          # so on Darwin it still links our own static .a archives (see
+          # the dylib-hiding step above) while leaving the unavoidable
+          # link against Apple's own libSystem/frameworks dynamic, exactly
+          # as intended.
+          PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix libssh2)/lib/pkgconfig" \
+            ./configure ARIA2_STATIC=yes --disable-websocket
+      - name: Build
+        run: make -j3
+      - name: Verify no Homebrew/bundled dependency remains
+        run: |
+          # aria2c still dynamically links against Apple's own system
+          # libraries (libSystem, CoreFoundation, ...) - that's normal
+          # and required on macOS, every binary does it, it's not
+          # something an app can or should embed. What must NOT be
+          # present after the static-linking step above is any
+          # Homebrew-path or otherwise bundled dylib: that's the
+          # "no loose file next to the binary" property this platform
+          # can actually deliver on.
+          test -s src/aria2c
+          file src/aria2c
+          mkdir -p dist
+          cp src/aria2c dist/aria2c
+          chmod +x dist/aria2c
+          raw="$(otool -L dist/aria2c)"
+          echo "$raw"
+          extra=$(echo "$raw" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/)' || true)
+          if [ -n "$extra" ]; then
+            echo "ERROR: aria2c still depends on non-system dylibs:"
+            echo "$extra"
+            exit 1
+          fi
+          ls -la dist/
+          echo "--- smoke test: dist/aria2c --version ---"
+          (cd dist && ./aria2c --version)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aria2-ultra-bep52-macos-x64
+          path: upstream/dist
+          if-no-files-found: error
+          retention-days: 14
 
   windows-x64:
     runs-on: windows-2022
     steps:
+      # windows-2022 runners default to core.autocrlf=true, which rewrites
+      # LF to CRLF on checkout. configure.ac (and other autotools sources)
+      # use backslash line continuations that break under CRLF: an M4
+      # macro argument list split across lines ends up with stray leading
+      # whitespace on every continuation line once checked out as CRLF,
+      # which is why AC_CHECK_HEADERS([windows.h \\\n  winsock2.h \\\n ...])
+      # silently reports "no" for winsock2.h/ws2tcpip.h/etc even though
+      # they exist - the macro-expanded header name has extra whitespace
+      # in it. This must run before checkout so it applies to this clone.
+      - name: Disable CRLF conversion for autotools sources
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
         with:
@@ -58,20 +205,75 @@ jobs:
         working-directory: upstream
         run: |
           autoreconf -i
-          ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl
+          # Fully static build: no loose DLLs next to aria2c.exe, everything
+          # (libaria2 itself, gmp, libxml2, sqlite3, c-ares, libssh2, zlib,
+          # gcc/stdc++/winpthread runtime) linked directly into the .exe.
+          # ARIA2_STATIC=yes is aria2's own static-build switch (see the
+          # Linux job for the full story): it makes pkg-config report
+          # static/transitive dependencies (e.g. libxml2's own dependency
+          # on zlib/iconv) AND adds libtool's -all-static to the final
+          # link, which is what actually forces every dependency to link
+          # in statically - a hand-rolled --disable-shared/--enable-static
+          # + LDFLAGS=-static never reached the real link command here
+          # either. -static-libgcc/-static-libstdc++ are kept explicitly
+          # since they're compiler-driver flags outside ARIA2_STATIC's
+          # scope, for the gcc/stdc++ runtime.
+          LDFLAGS="-static-libgcc -static-libstdc++" \
+            ./configure --host=x86_64-w64-mingw32 --with-wintls --without-openssl \
+              --disable-websocket ARIA2_STATIC=yes
       - name: Build
         shell: msys2 {0}
         working-directory: upstream
         run: make -j2
+      - name: Install to staging prefix
+        shell: msys2 {0}
+        working-directory: upstream
+        run: |
+          # src/aria2c.exe is NOT the real binary: it's a small (tens of
+          # KB) libtool launcher stub that only works inside the build
+          # tree (alongside src/.libs/), which is why `ldd` on it shows
+          # nothing but base Windows DLLs (no libaria2, no third-party
+          # libs at all) and it fails to run once copied out on its own.
+          # `make install` makes libtool relink the real, final binary
+          # into place - the standard, well-tested way an autotools
+          # project like this one is meant to produce a distributable
+          # binary - so use that instead of guessing at .libs/ paths.
+          make install DESTDIR="$PWD/instroot"
+          find instroot -name 'aria2c.exe'
       - name: Verify binary
         shell: msys2 {0}
         working-directory: upstream
         run: |
-          test -s src/aria2c.exe
-          file src/aria2c.exe
+          bin=$(find instroot -name 'aria2c.exe' | head -1)
+          echo "BIN=$bin" >> "$GITHUB_ENV"
+          test -s "$bin"
+          file "$bin"
+      - name: Verify fully static (no loose DLLs)
+        shell: msys2 {0}
+        working-directory: upstream
+        run: |
+          # The whole point of the static build above is a single
+          # standalone .exe with nothing next to it. Verify that here
+          # instead of silently bundling DLLs to paper over a link that
+          # went dynamic: if ldd finds anything beyond base Windows
+          # system DLLs, fail the build loudly so it gets fixed rather
+          # than shipping a broken artifact.
+          mkdir -p dist
+          cp "$BIN" dist/aria2c.exe
+          raw="$(ldd dist/aria2c.exe || true)"
+          echo "$raw"
+          extra=$(echo "$raw" | awk '{print $3}' | grep -v '^$' | grep -viE '^/c/windows/' | sort -u || true)
+          if [ -n "$extra" ]; then
+            echo "ERROR: aria2c.exe is not fully static - found external DLL dependencies:"
+            echo "$extra"
+            exit 1
+          fi
+          ls -la dist/
+          echo "--- smoke test: dist/aria2c.exe --version ---"
+          (cd dist && ./aria2c.exe --version)
       - uses: actions/upload-artifact@v4
         with:
           name: aria2-ultra-bep52-windows-x64
-          path: upstream/src/aria2c.exe
+          path: upstream/dist
           if-no-files-found: error
           retention-days: 14

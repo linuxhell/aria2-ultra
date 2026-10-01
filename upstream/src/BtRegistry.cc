@@ -33,8 +33,13 @@
  */
 /* copyright --> */
 #include "BtRegistry.h"
+
+#include <cstring>
+
+#include "BtConstants.h"
 #include "DlAbortEx.h"
 #include "DownloadContext.h"
+#include "RecoverableException.h"
 #include "PeerStorage.h"
 #include "PieceStorage.h"
 #include "BtAnnounce.h"
@@ -64,10 +69,27 @@ BtRegistry::getDownloadContext(a2_gid_t gid) const
 const std::shared_ptr<DownloadContext>&
 BtRegistry::getDownloadContext(const std::string& infoHash) const
 {
+  // infoHash here is exactly the 20-byte value taken off the wire
+  // (handshake, tracker, LPD, DHT): the BEP 3 v1 hash for v1/hybrid
+  // torrents, or the BEP 52 truncated v2 hash for v2-only torrents.
+  // Compare against the same wire-form hash rather than the raw v1
+  // TorrentAttribute::infoHash, which is empty for v2-only torrents and
+  // would make every incoming v2-only peer connection look unknown.
   for (auto& kv : pool_) {
-    if (bittorrent::getTorrentAttrs(kv.second->downloadContext)->infoHash ==
-        infoHash) {
-      return kv.second->downloadContext;
+    auto* dctx = kv.second->downloadContext.get();
+    if (!dctx->hasAttribute(CTX_ATTR_BT)) {
+      continue;
+    }
+    try {
+      const unsigned char* wireHash = bittorrent::getWireInfoHash(dctx);
+      if (infoHash.size() == INFO_HASH_LENGTH &&
+          std::memcmp(wireHash, infoHash.data(), INFO_HASH_LENGTH) == 0) {
+        return kv.second->downloadContext;
+      }
+    }
+    catch (RecoverableException&) {
+      // No usable hash (should not normally happen for a BT download);
+      // skip this entry rather than aborting the whole lookup.
     }
   }
   return getNull<DownloadContext>();

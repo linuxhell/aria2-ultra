@@ -1,0 +1,58 @@
+name: Publish validated aria2-ultra binaries
+on:
+  workflow_run:
+    workflows: [BEP52 phase 4 CI]
+    types: [completed]
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: publish-aria2-ultra
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'claude/upbeat-cannon-7ovk29' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aria2-ultra-bep52-*
+          path: artifacts
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Prepare checked assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          cp artifacts/aria2-ultra-bep52-linux-x64/aria2c release-assets/aria2c-linux-x64
+          cp artifacts/aria2-ultra-bep52-windows-x64/aria2c.exe release-assets/aria2c-windows-x64.exe
+          cp artifacts/aria2-ultra-bep52-macos-x64/aria2c release-assets/aria2c-macos-x64
+          for file in release-assets/aria2c-*; do
+            test -s "$file"
+            (cd release-assets && sha256sum "${file##*/}" > "${file##*/}.sha256")
+          done
+      - name: Publish immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN: ${{ github.event.workflow_run.html_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v1.37.0-ultra.2-${SOURCE_SHA:0:8}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'This source version is already published.'
+            exit 0
+          fi
+          cp release-notes-ultra.2.md notes.md
+          printf '\nSource: %s\nValidated build: %s\n' "$SOURCE_SHA" "$SOURCE_RUN" >> notes.md
+          gh release create "$tag" release-assets/* --target "$SOURCE_SHA" \
+            --title 'aria2-ultra 1.37.0 ultra.2' --notes-file notes.md

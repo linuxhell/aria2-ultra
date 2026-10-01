@@ -53,6 +53,8 @@ class DHTNode;
 class DHTRoutingTable;
 class DHTTaskQueue;
 class DHTTaskFactory;
+class BtHashRequestTracker;
+class BtHashRequestMessage;
 
 class DefaultBtMessageFactory : public BtMessageFactory {
 private:
@@ -81,6 +83,8 @@ private:
   DHTTaskFactory* taskFactory_;
 
   bool metadataGetMode_;
+
+  BtHashRequestTracker* hashRequestTracker_;
 
   void setCommonProperty(AbstractBtMessage* msg);
 
@@ -149,6 +153,10 @@ public:
   virtual std::unique_ptr<BtExtendedMessage>
   createBtExtendedMessage(std::unique_ptr<ExtensionMessage> msg) CXX11_OVERRIDE;
 
+  virtual std::unique_ptr<BtHashRequestMessage>
+  createHashRequestMessage(const std::string& piecesRoot,
+                           uint32_t length) CXX11_OVERRIDE;
+
   void setPeer(const std::shared_ptr<Peer>& peer);
 
   void setDownloadContext(DownloadContext* downloadContext);
@@ -176,6 +184,11 @@ public:
   void setTaskQueue(DHTTaskQueue* taskQueue);
 
   void setTaskFactory(DHTTaskFactory* taskFactory);
+
+  void setHashRequestTracker(BtHashRequestTracker* tracker)
+  {
+    hashRequestTracker_ = tracker;
+  }
 
   void enableMetadataGetMode() { metadataGetMode_ = true; }
 };
