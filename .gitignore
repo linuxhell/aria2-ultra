@@ -22,3 +22,6 @@ upstream/**/*.la
 upstream/src/aria2c
 upstream/src/aria2c.exe
 upstream/instroot/
+
+# Claude Code's own session tooling (agent worktrees, etc.), not project content.
+/.claude/
