@@ -42,6 +42,11 @@ namespace aria2 {
 struct BackupConnectInfo;
 class ConnectCommand;
 
+// Picks which of a hostname's resolved addresses this particular connection
+// (identified by cuid) should use, round-robin. addrs must not be empty.
+const std::string&
+selectDistributedAddress(const std::vector<std::string>& addrs, cuid_t cuid);
+
 class InitiateConnectionCommand : public AbstractCommand {
 protected:
   /**

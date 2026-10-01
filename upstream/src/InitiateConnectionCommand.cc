@@ -54,7 +54,16 @@
 #include "BackupIPv4ConnectCommand.h"
 #include "ConnectCommand.h"
 
+#include <cassert>
+
 namespace aria2 {
+
+const std::string&
+selectDistributedAddress(const std::vector<std::string>& addrs, cuid_t cuid)
+{
+  assert(!addrs.empty());
+  return addrs[static_cast<size_t>(cuid) % addrs.size()];
+}
 
 InitiateConnectionCommand::InitiateConnectionCommand(
     cuid_t cuid, const std::shared_ptr<Request>& req,
@@ -89,6 +98,28 @@ bool InitiateConnectionCommand::executeInternal()
   if (ipaddr.empty()) {
     addCommandSelf();
     return false;
+  }
+  // aria2-ultra: a segmented HTTP(S) download pinned every parallel
+  // connection to addrs.front() - the same single resolved address - even
+  // when the hostname resolves to several (common for CDNs and any domain
+  // with more than one A/AAAA record). That leaves real capacity on the
+  // table whenever one address alone can't sustain every connection, and
+  // was never addressed upstream (aria2/aria2#2261, open and unimplemented
+  // as of this writing). Distribute connections round-robin across every
+  // resolved address instead, keyed by CUID so each of this download's
+  // parallel connections lands on a different one deterministically.
+  if (!proxyRequest && addrs.size() > 1 &&
+      (getRequest()->getProtocol() == "http" ||
+       getRequest()->getProtocol() == "https") &&
+      getOption()->getAsInt(PREF_SPLIT) > 1) {
+    const std::string& chosen = selectDistributedAddress(addrs, getCuid());
+    if (chosen != ipaddr) {
+      A2_LOG_INFO(fmt("CUID#%" PRId64 " - Distributing across %lu resolved "
+                      "addresses for %s: using %s",
+                      getCuid(), static_cast<unsigned long>(addrs.size()),
+                      hostname.c_str(), chosen.c_str()));
+      ipaddr = chosen;
+    }
   }
   try {
     auto c = createNextCommand(hostname, ipaddr, port, addrs, proxyRequest);

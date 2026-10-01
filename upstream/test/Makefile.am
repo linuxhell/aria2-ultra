@@ -22,6 +22,7 @@ aria2c_SOURCES = AllTest.cc\
 	HttpHeaderProcessorTest.cc\
 	RequestTest.cc\
 	HttpRequestTest.cc\
+	InitiateConnectionCommandTest.cc\
 	RequestGroupManTest.cc\
 	AuthConfigFactoryTest.cc\
 	NetrcAuthResolverTest.cc\
