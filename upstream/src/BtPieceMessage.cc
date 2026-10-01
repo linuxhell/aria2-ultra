@@ -241,6 +241,48 @@ std::string BtPieceMessage::toString() const
 
 bool BtPieceMessage::checkPieceHash(const std::shared_ptr<Piece>& piece)
 {
+  const auto* torrent = bittorrent::getTorrentAttrs(downloadContext_);
+  const bool v2Only =
+      torrent->metaVersion == 2 && torrent->infoHash.empty() &&
+      !torrent->infoHashV2.empty();
+  if (v2Only) {
+    size_t fileIndex;
+    size_t localPieceIndex;
+    int64_t localPieceLength;
+    if (!bittorrent::locateV2Piece(
+            torrent, downloadContext_->getFileEntries(), piece->getIndex(),
+            downloadContext_->getPieceLength(), fileIndex, localPieceIndex,
+            localPieceLength)) {
+      return false;
+    }
+
+    // The v2 verifier needs the actual bytes. Flush this piece's write cache
+    // first so DiskAdaptor exposes exactly the data that was received.
+    if (piece->getWrDiskCacheEntry()) {
+      piece->flushWrCache(getPieceStorage()->getWrDiskCache());
+      if (piece->getWrDiskCacheEntry()->getError() !=
+          WrDiskCacheEntry::CACHE_ERR_SUCCESS) {
+        throw DOWNLOAD_FAILURE_EXCEPTION2(
+            fmt("Write disk cache flush failure index=%lu",
+                static_cast<unsigned long>(piece->getIndex())),
+            piece->getWrDiskCacheEntry()->getErrorCode());
+      }
+    }
+
+    std::string data(static_cast<size_t>(localPieceLength), '\0');
+    const int64_t offset =
+        static_cast<int64_t>(piece->getIndex()) *
+        downloadContext_->getPieceLength();
+    const auto nread = getPieceStorage()->getDiskAdaptor()->readData(
+        reinterpret_cast<unsigned char*>(&data[0]), data.size(), offset);
+    if (nread != localPieceLength) {
+      throw DL_ABORT_EX(EX_DATA_READ);
+    }
+    return bittorrent::verifyV2PieceByGlobalIndex(
+        torrent, downloadContext_->getFileEntries(), piece->getIndex(),
+        downloadContext_->getPieceLength(), data);
+  }
+
   if (!getPieceStorage()->isEndGame() && piece->isHashCalculated()) {
     A2_LOG_DEBUG(fmt("Hash is available!! index=%lu",
                      static_cast<unsigned long>(piece->getIndex())));

@@ -80,6 +80,9 @@
 #include "bittorrent_helper.h"
 #include "UTMetadataRequestFactory.h"
 #include "UTMetadataRequestTracker.h"
+#include "BtHashRequestFactory.h"
+#include "BtHashRequestTracker.h"
+#include "TorrentAttribute.h"
 #include "wallclock.h"
 
 namespace aria2 {
@@ -431,6 +434,29 @@ void DefaultBtInteractive::addRequests()
   }
 }
 
+void DefaultBtInteractive::addHashRequests()
+{
+  // BEP 52: for a v2/hybrid download whose piece layers weren't already
+  // known from a .torrent file (i.e. a v2-only magnet), ask this peer for
+  // any file's layer we still lack. A no-op for v1-only downloads, since
+  // they have no v2 file entries to iterate. Piece data for a file may
+  // still be requested (via addRequests() below) before its layer
+  // arrives; such a piece simply fails hash verification and is retried
+  // once the layer is known, the same as any other corrupt-piece case.
+  if (!hashRequestFactory_ || !hashRequestTracker_) {
+    return;
+  }
+  const size_t MAX_OUTSTANDING_HASH_REQUEST = 4;
+  if (hashRequestTracker_->count() >= MAX_OUTSTANDING_HASH_REQUEST) {
+    return;
+  }
+  auto requests = hashRequestFactory_->create(MAX_OUTSTANDING_HASH_REQUEST -
+                                              hashRequestTracker_->count());
+  for (auto& i : requests) {
+    dispatcher_->addMessageToQueue(std::move(i));
+  }
+}
+
 void DefaultBtInteractive::cancelAllPiece()
 {
   btRequestFactory_->removeAllTargetPiece();
@@ -566,6 +592,11 @@ void DefaultBtInteractive::doInteractionProcessing()
     if (perSecTimer_.difference(global::wallclock()) >= 1_s) {
       perSecTimer_ = global::wallclock();
       dispatcher_->checkRequestSlotAndDoNecessaryThing();
+      if (hashRequestTracker_) {
+        // Timed-out roots simply become eligible again for addHashRequests()
+        // below, possibly against a different peer.
+        hashRequestTracker_->removeTimeoutEntry();
+      }
     }
     numReceivedMessage_ = receiveMessages();
     detectMessageFlooding();
@@ -575,6 +606,7 @@ void DefaultBtInteractive::doInteractionProcessing()
     sendKeepAlive();
     btRequestFactory_->removeCompletedPiece();
     if (!pieceStorage_->downloadFinished()) {
+      addHashRequests();
       addRequests();
     }
   }
@@ -693,6 +725,18 @@ void DefaultBtInteractive::setUTMetadataRequestFactory(
     std::unique_ptr<UTMetadataRequestFactory> factory)
 {
   utMetadataRequestFactory_ = std::move(factory);
+}
+
+void DefaultBtInteractive::setHashRequestTracker(
+    std::unique_ptr<BtHashRequestTracker> tracker)
+{
+  hashRequestTracker_ = std::move(tracker);
+}
+
+void DefaultBtInteractive::setHashRequestFactory(
+    std::unique_ptr<BtHashRequestFactory> factory)
+{
+  hashRequestFactory_ = std::move(factory);
 }
 
 } // namespace aria2

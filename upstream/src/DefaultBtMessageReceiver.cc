@@ -112,7 +112,7 @@ DefaultBtMessageReceiver::receiveAndSendHandshake()
 void DefaultBtMessageReceiver::sendHandshake()
 {
   dispatcher_->addMessageToQueue(messageFactory_->createHandshakeMessage(
-      bittorrent::getInfoHash(downloadContext_),
+      bittorrent::getWireInfoHash(downloadContext_),
       bittorrent::getStaticPeerId()));
   dispatcher_->sendMessages();
 }

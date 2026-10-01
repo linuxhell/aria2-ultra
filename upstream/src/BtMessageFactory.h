@@ -38,6 +38,7 @@
 #include "common.h"
 
 #include <memory>
+#include <string>
 
 namespace aria2 {
 
@@ -61,6 +62,7 @@ class BtUnchokeMessage;
 class BtExtendedMessage;
 class ExtensionMessage;
 class Piece;
+class BtHashRequestMessage;
 
 class BtMessageFactory {
 public:
@@ -115,6 +117,12 @@ public:
 
   virtual std::unique_ptr<BtExtendedMessage>
   createBtExtendedMessage(std::unique_ptr<ExtensionMessage> msg) = 0;
+
+  // BEP 52: requests the whole piece layer for the file whose piecesRoot
+  // is given (length is its layer width, see bittorrent::v2PieceLayerWidth;
+  // baseLayer and proofLayers are always 0 for this "whole layer" shape).
+  virtual std::unique_ptr<BtHashRequestMessage>
+  createHashRequestMessage(const std::string& piecesRoot, uint32_t length) = 0;
 };
 
 } // namespace aria2
